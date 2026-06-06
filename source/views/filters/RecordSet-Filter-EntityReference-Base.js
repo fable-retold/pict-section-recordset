@@ -230,6 +230,7 @@ class ViewRecordSetSUBSETFilterEntityReferenceBase extends ViewRecordSetSUBSETFi
 					Destination: pOffset > 0 ? `${this.getInformaryAddressPrefix()}${pClauseInformaryAddress}.SearchResultsAppend` : `${this.getInformaryAddressPrefix()}${pClauseInformaryAddress}.SearchResults`,
 					RecordStartCursor: pOffset,
 					PageSize: this.options.PageSize,
+					URLPrefix: tmpClause.URLPrefix,
 				}
 			],
 			() =>

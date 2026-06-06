@@ -498,11 +498,19 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 			const tmpFieldHumanName = this.getHumanReadableFieldName(pSchemaField);
 			const isUserAuditField = ['CreatingIDUser', 'DeletingIDUser', 'UpdatingIDUser'].includes(pSchemaField);
 			const customFilterClauses = this.options.Filters?.[pSchemaField];
-			if (pSchemaField.startsWith('ID') || pSchemaField.startsWith('ParentID') || isUserAuditField || customFilterClauses)
+			// The entity's own identity column (AutoIdentity / AutoGUID) — i.e. the primary key.
+			const isOwnIdentityField = pMeadowSchemaField && (pMeadowSchemaField.Type === 'AutoIdentity' || pMeadowSchemaField.Type === 'AutoGUID');
+			const isForeignKeyLike = pSchemaField.startsWith('ID') || pSchemaField.startsWith('ParentID') || isUserAuditField || customFilterClauses;
+			if (isForeignKeyLike)
 			{
 				for (const customField of Array.isArray(customFilterClauses) ? customFilterClauses : [customFilterClauses])
 				{
-					const remoteTableName = customField?.RemoteTable || pSchemaField.split('ID')[1];
+					// The table the picker pulls from: an explicit RemoteTable, else this
+					// recordset's declared Entity when the column is our own primary key (the PK
+					// references our own records), else the name peeled from the column for a
+					// plain foreign key. Peeling alone is the defect — a lake PK like
+					// `IDC182_HMA_MixDesign` peels to a table name that is not the entity name.
+					const remoteTableName = customField?.RemoteTable || (isOwnIdentityField ? this.options.Entity : pSchemaField.split('ID')[1]);
 					const fieldName = this.getHumanReadableFieldName(pSchemaField);
 					tmpFieldFilterClauses.push(Object.assign(
 					{
@@ -512,6 +520,7 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 						"ExternalRecordDisplayTemplate": remoteTableName === 'User' ? '{~D:Record.Data.NameFirst~} {~D:Record.Data.NameLast~}' : '{~D:Record.Name~}',
 						"CoreConnectionColumn": pSchemaField,
 						"RemoteTable": `${ remoteTableName }`,
+						"URLPrefix": this.options.URLPrefix,
 						"JoinExternalConnectionColumn": `ID${ remoteTableName }`,
 						"JoinInternalConnectionColumn": pSchemaField,
 						'DisplayName': `Selected Records`,
@@ -521,7 +530,10 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 					}, customField));
 				}
 			}
-			else
+			// The primary key is also a plain integer key, so it ALSO falls through to the
+			// Exact / In Range clauses below. A real foreign key gets only the picker; ordinary
+			// columns are matched by type.
+			if (!isForeignKeyLike || isOwnIdentityField)
 			{
 				switch (tmpFieldType)
 				{

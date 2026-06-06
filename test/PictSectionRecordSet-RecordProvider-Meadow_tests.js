@@ -211,6 +211,61 @@ suite
 						Expect(deser).to.be.an('array', 'Deserialized filter experience should be an array.');
 						Expect(deser).to.deep.equal([ { Type: 'fake', Value: 'valyou' } ], 'Deserialized filter experience should match the original.');
 					});
+
+					test('filter schema - the primary key keeps its filters, with the picker resolving the recordset entity (not a peeled table name)', () =>
+					{
+						const tmpProvider = _Pict.providers.BooksProvider;
+						if (!_Pict.providers.FilterManager) { _Pict.providers.FilterManager = { filters: {} }; }
+						// A private-data-lake table's /Schema: an AutoIdentity PK that *looks*
+						// like a foreign key (IDC182_X), a real Integer FK (IDAuthor), plus a
+						// date column and a metric.
+						tmpProvider._Schema =
+						{
+							title: 'C182_Moisture_Day', type: 'object', required: [],
+							properties:
+							{
+								IDC182_Moisture_Day: { type: 'integer', size: 'Default' },
+								IDAuthor:            { type: 'integer', size: 'int' },
+								BucketDate:          { type: 'string',  size: 'Default' },
+								TotalSamples:        { type: 'integer', size: 'int' }
+							},
+							MeadowSchema:
+							{
+								Scope: 'C182_Moisture_Day', DefaultIdentifier: 'IDC182_Moisture_Day',
+								Schema:
+								[
+									{ Column: 'IDC182_Moisture_Day', Type: 'AutoIdentity' },
+									{ Column: 'IDAuthor',            Type: 'Integer' },
+									{ Column: 'BucketDate',          Type: 'DateTime' },
+									{ Column: 'TotalSamples',        Type: 'Integer' }
+								]
+							}
+						};
+						tmpProvider._FilterSchema = {};
+						tmpProvider.initializeFilterSchema();
+						const tmpClausesFor = (pField) => (tmpProvider._FilterSchema[pField] || {}).AvailableClauses || [];
+						const tmpTypesFor = (pField) => tmpClausesFor(pField).map((pClause) => pClause.Type);
+						const tmpPickerFor = (pField) => tmpClausesFor(pField).find((pClause) => pClause.Type === 'InternalJoinSelectedValueList');
+
+						// The PK keeps its useful numeric filters (Exact Match / In Range)...
+						Expect(tmpTypesFor('IDC182_Moisture_Day')).to.include('NumericRange', 'the PK keeps its In Range filter');
+						Expect(tmpTypesFor('IDC182_Moisture_Day')).to.include('NumericMatch', 'the PK keeps its Exact Match filter');
+						// ...AND a Selected-Records picker — but resolved to the recordset's declared
+						// Entity, NOT a table name peeled from the column (that peel is the defect).
+						Expect(tmpPickerFor('IDC182_Moisture_Day'), 'the PK still offers a Selected-Records picker').to.exist;
+						Expect(tmpPickerFor('IDC182_Moisture_Day').RemoteTable).to.equal(tmpProvider.options.Entity, 'the PK picker references the recordset entity');
+						Expect(tmpPickerFor('IDC182_Moisture_Day').RemoteTable).to.not.equal('C182_Moisture_Day', 'the PK picker must not use the peeled physical table name');
+						Expect(tmpPickerFor('IDC182_Moisture_Day').URLPrefix).to.equal(tmpProvider.options.URLPrefix, 'the picker carries the recordset URLPrefix so the value-list fetch routes to the right endpoint');
+
+						// A real foreign key still resolves by peeling its referenced entity, and
+						// stays picker-only (no numeric range on a foreign-key column).
+						Expect(tmpPickerFor('IDAuthor').RemoteTable).to.equal('Author', 'a real foreign key resolves to its referenced entity by name');
+						Expect(tmpTypesFor('IDAuthor')).to.not.include('NumericRange', 'a real foreign key stays a picker, not a numeric range');
+
+						// Ordinary columns resolve to their usual widgets.
+						Expect(tmpTypesFor('BucketDate')).to.include('DateRange', 'a date column gets a date-range filter');
+						Expect(tmpTypesFor('TotalSamples')).to.include('NumericRange', 'a numeric column gets a numeric-range filter');
+					});
 				});
 	}
 );
