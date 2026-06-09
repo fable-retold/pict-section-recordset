@@ -67,6 +67,40 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 	}
 
 	/**
+	 * Fetch (and cache) the DISTINCT values of a column present in this recordset's data, via
+	 * Meadow's `<Entity>s/Distinct/<Column>` endpoint. Drives the `ScopeToRecordSet` filter knob:
+	 * an entity picker can be limited to `FBL~<Column>~INN~<these values>` so it only lists the
+	 * entities the data actually references, not the whole remote table. Cached per column.
+	 *
+	 * @param {string} pColumn @param {(pError: Error|null, pValues: Array<any>) => void} fCallback
+	 */
+	getRecordSetColumnDistinct(pColumn, fCallback)
+	{
+		this._scopeDistinctCache = this._scopeDistinctCache || {};
+		if (Array.isArray(this._scopeDistinctCache[pColumn]))
+		{
+			return fCallback(null, this._scopeDistinctCache[pColumn]);
+		}
+		if (!this.options.Entity || !this.entityProvider || !this.entityProvider.restClient)
+		{
+			return fCallback(new Error('RecordSet provider cannot resolve a distinct request (missing Entity or rest client).'), []);
+		}
+		const tmpURL = `${this.options.URLPrefix || ''}${this.options.Entity}s/Distinct/${pColumn}`;
+		this.entityProvider.restClient.getJSON(tmpURL, (pError, pResponse, pBody) =>
+		{
+			if (pError || (pResponse && pResponse.statusCode > 299) || !Array.isArray(pBody))
+			{
+				this.pict.log.warn(`RecordSet [${this.options.RecordSet || this.options.Entity}] distinct fetch for [${pColumn}] failed; the scoped filter falls back to unscoped.`, { Error: pError && pError.message, URL: tmpURL });
+				this._scopeDistinctCache[pColumn] = [];
+				return fCallback(pError || new Error('distinct fetch returned a non-array'), []);
+			}
+			const tmpValues = [ ...new Set(pBody.map((pRecord) => pRecord && pRecord[pColumn]).filter((pValue) => pValue != null)) ];
+			this._scopeDistinctCache[pColumn] = tmpValues;
+			return fCallback(null, tmpValues);
+		});
+	}
+
+	/**
 	 * @return {Array<string>} - The fields to ignore for filter availability.
 	 */
 	get ignoreFilterFields()

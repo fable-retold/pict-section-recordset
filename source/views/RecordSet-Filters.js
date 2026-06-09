@@ -674,6 +674,23 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		const tmpDescriptor = tmpProvider.getFilterClauseSchemaForKey(pMount.Field)?.AvailableClauses?.find?.((pClause) => pClause.ClauseKey === pMount.ClauseKey);
 		if (!tmpDescriptor || !tmpDescriptor.RemoteTable) { return; }
 		const tmpSearchFields = Array.isArray(tmpDescriptor.ExternalFilterByColumns) && tmpDescriptor.ExternalFilterByColumns.length > 0 ? tmpDescriptor.ExternalFilterByColumns : [ 'Name' ];
+		// ScopeToRecordSet knob: limit the picker to the values present in this recordset's data
+		// (FBL~<col>~INN~<distinct>) so it doesn't list the whole remote table. Pre-fetch the
+		// distinct set, then re-mount once it resolves so the first open is already scoped.
+		let tmpScopeBaseFilter = undefined;
+		if (tmpDescriptor.ScopeToRecordSet && tmpDescriptor.FilterByColumn && typeof tmpProvider.getRecordSetColumnDistinct === 'function')
+		{
+			const tmpScopeColumn = tmpDescriptor.FilterByColumn;
+			if (!tmpProvider._scopeDistinctCache || !Array.isArray(tmpProvider._scopeDistinctCache[tmpScopeColumn]))
+			{
+				tmpProvider.getRecordSetColumnDistinct(tmpScopeColumn, () => this._mountQuickFilterEntity(pRecordSet, pViewContext, pMount));
+			}
+			tmpScopeBaseFilter = () =>
+			{
+				const tmpVals = (tmpProvider._scopeDistinctCache || {})[tmpScopeColumn];
+				return (Array.isArray(tmpVals) && tmpVals.length > 0) ? `FBL~${tmpScopeColumn}~INN~${tmpVals.join(',')}` : '';
+			};
+		}
 		const tmpView = tmpPickerProvider.createEntityPicker(`Quick-Picker-${pRecordSet}-${pMount.Field}`,
 		{
 			DestinationAddress: `#${pMount.HostID}`,
@@ -688,6 +705,7 @@ class ViewRecordSetSUBSETFilters extends libPictView
 			TextTemplate: tmpDescriptor.EntityListEntryTemplate || undefined,
 			Placeholder: `Select ${pMount.Label}…`,
 			OnChange: (pValue) => this.applyQuickFilterEntity(pRecordSet, pViewContext, pMount.Field, pMount.ClauseKey, pValue),
+			BaseFilter: tmpScopeBaseFilter,
 		});
 		if (!tmpView) { return; }
 		tmpView.render();

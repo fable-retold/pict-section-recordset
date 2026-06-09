@@ -127,6 +127,25 @@ class ViewRecordSetSUBSETFilterEntityReferenceBase extends ViewRecordSetSUBSETFi
 	 */
 	getContextScopeFilter(pClause)
 	{
+		// ScopeToRecordSet knob: scope the entity search to the values present in the recordset's
+		// data (FBL~<col>~INN~<distinct>), fetched + cached on the recordset provider. The first
+		// search may be unscoped until the fetch resolves; subsequent searches are scoped.
+		if (pClause && pClause.ScopeToRecordSet && pClause.FilterByColumn)
+		{
+			const tmpProvider = this.pict.providers['RSP-Provider-' + pClause.RecordSet];
+			if (tmpProvider && typeof tmpProvider.getRecordSetColumnDistinct === 'function')
+			{
+				if (!tmpProvider._scopeDistinctCache || !Array.isArray(tmpProvider._scopeDistinctCache[pClause.FilterByColumn]))
+				{
+					tmpProvider.getRecordSetColumnDistinct(pClause.FilterByColumn, () => {});
+				}
+				const tmpVals = (tmpProvider._scopeDistinctCache || {})[pClause.FilterByColumn];
+				if (Array.isArray(tmpVals) && tmpVals.length > 0)
+				{
+					return `FBL~${pClause.FilterByColumn}~INN~${tmpVals.join(',')}`;
+				}
+			}
+		}
 		return pClause.ContextScopeFilter || '';
 	}
 
