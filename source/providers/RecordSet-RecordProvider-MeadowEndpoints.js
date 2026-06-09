@@ -979,62 +979,87 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 			for (const tmpFilterKey of Object.keys(this.pict.providers.FilterManager.filters))
 			{
 				const tmpFilterClause = this.pict.providers.FilterManager.filters[tmpFilterKey];
-				if (tmpFilterClause.CoreConnectionColumn === this.getIDField())
+				// Two recognised host-declared filter shapes:
+				//   (1) Foreign-key join — `CoreConnectionColumn` equals this recordset's
+				//       PK (e.g. a Sample filter whose data flow joins on IDSample). Folded
+				//       into `_FilterSchema[FilterKey]` for back-compat with the existing
+				//       behaviour.
+				//   (2) Plain column filter — declares `FilterByColumn` and wants to surface
+				//       as the column's filter entry. Folded into
+				//       `_FilterSchema[FilterByColumn]` so the Add Filter popover / Quick
+				//       Filter resolver find it under the same slot the schema-derived
+				//       entries use.
+				// Optional per-recordset scoping: when the filter clause declares a
+				// `RecordSet`, only fold into providers whose `options.RecordSet` matches.
+				// Lets a host register the same `FilterByColumn` under different definitions
+				// per dashboard without cross-pollination.
+				if (tmpFilterClause.RecordSet && tmpFilterClause.RecordSet !== this.options.RecordSet)
 				{
-					//FIXME: I don't think using filter key is right here
-					let tmpFieldFilterSchema = this._FilterSchema[tmpFilterKey];
-					if (!tmpFieldFilterSchema)
-					{
-						this._FilterSchema[tmpFilterKey] = tmpFieldFilterSchema = { };
-					}
-					if (!tmpFieldFilterSchema.FilterKey)
-					{
-						tmpFieldFilterSchema.FilterKey = tmpFilterKey;
-					}
-					if (!tmpFieldFilterSchema.RecordSet)
-					{
-						tmpFieldFilterSchema.RecordSet = this.options.RecordSet;
-					}
-					const tmpFieldHumanName = this.getHumanReadableFieldName(tmpFilterKey);
-					if (tmpFilterClause.DisplayName)
-					{
-						tmpFieldFilterSchema.DisplayName = tmpFilterClause.DisplayName;
-					}
-					if (!tmpFieldFilterSchema.DisplayName)
-					{
-						tmpFieldFilterSchema.DisplayName = tmpFieldHumanName;
-					}
-					if (!tmpFieldFilterSchema.Description)
-					{
-						tmpFieldFilterSchema.Description = tmpFilterClause.Description || `Filter by ${tmpFieldFilterSchema.DisplayName}`;
-					}
-					if (!tmpFieldFilterSchema.HelpText)
-					{
-						tmpFieldFilterSchema.HelpText = tmpFilterClause.HelpText || `Filter by ${tmpFieldFilterSchema.DisplayName} for the ${this._getHumanReadableEntityName(this.options.Entity)} entity.`;
-					}
-					if (tmpFieldFilterSchema.Ordinal == null)
-					{
-						tmpFieldFilterSchema.Ordinal = tmpOrdinal;
-					}
-					if (!Array.isArray(tmpFieldFilterSchema.AvailableClauses))
-					{
-						tmpFieldFilterSchema.AvailableClauses = [];
-					}
-					tmpFieldFilterSchema.AvailableClauses.push(tmpFilterClause.ClauseName ? Object.assign(tmpFilterClause, { DisplayName: tmpFilterClause.ClauseName }) : tmpFilterClause);
-					if (!tmpFilterClause.FilterKey)
-					{
-						tmpFilterClause.FilterKey = tmpFilterKey;
-					}
-					if (!tmpFilterClause.ClauseKey)
-					{
-						tmpFilterClause.ClauseKey = tmpFilterKey;
-					}
-					if (!tmpFilterClause.DisplayName)
-					{
-						tmpFilterClause.DisplayName = tmpFieldHumanName;
-					}
-					tmpFilterClause.Ordinal = tmpFieldFilterSchema.AvailableClauses.length + 1;
+					continue;
 				}
+				const tmpIsCoreConnection = (tmpFilterClause.CoreConnectionColumn === this.getIDField());
+				const tmpHasFilterByColumn = !!tmpFilterClause.FilterByColumn;
+				if (!tmpIsCoreConnection && !tmpHasFilterByColumn)
+				{
+					continue;
+				}
+				const tmpSlotKey = tmpIsCoreConnection ? tmpFilterKey : tmpFilterClause.FilterByColumn;
+				if (this.ignoreFilterFields.includes(tmpSlotKey))
+				{
+					continue;
+				}
+				let tmpFieldFilterSchema = this._FilterSchema[tmpSlotKey];
+				if (!tmpFieldFilterSchema)
+				{
+					this._FilterSchema[tmpSlotKey] = tmpFieldFilterSchema = { };
+				}
+				if (!tmpFieldFilterSchema.FilterKey)
+				{
+					tmpFieldFilterSchema.FilterKey = tmpSlotKey;
+				}
+				if (!tmpFieldFilterSchema.RecordSet)
+				{
+					tmpFieldFilterSchema.RecordSet = this.options.RecordSet;
+				}
+				const tmpFieldHumanName = this.getHumanReadableFieldName(tmpSlotKey);
+				if (tmpFilterClause.DisplayName)
+				{
+					tmpFieldFilterSchema.DisplayName = tmpFilterClause.DisplayName;
+				}
+				if (!tmpFieldFilterSchema.DisplayName)
+				{
+					tmpFieldFilterSchema.DisplayName = tmpFieldHumanName;
+				}
+				if (!tmpFieldFilterSchema.Description)
+				{
+					tmpFieldFilterSchema.Description = tmpFilterClause.Description || `Filter by ${tmpFieldFilterSchema.DisplayName}`;
+				}
+				if (!tmpFieldFilterSchema.HelpText)
+				{
+					tmpFieldFilterSchema.HelpText = tmpFilterClause.HelpText || `Filter by ${tmpFieldFilterSchema.DisplayName} for the ${this._getHumanReadableEntityName(this.options.Entity)} entity.`;
+				}
+				if (tmpFieldFilterSchema.Ordinal == null)
+				{
+					tmpFieldFilterSchema.Ordinal = tmpOrdinal;
+				}
+				if (!Array.isArray(tmpFieldFilterSchema.AvailableClauses))
+				{
+					tmpFieldFilterSchema.AvailableClauses = [];
+				}
+				tmpFieldFilterSchema.AvailableClauses.push(tmpFilterClause.ClauseName ? Object.assign(tmpFilterClause, { DisplayName: tmpFilterClause.ClauseName }) : tmpFilterClause);
+				if (!tmpFilterClause.FilterKey)
+				{
+					tmpFilterClause.FilterKey = tmpSlotKey;
+				}
+				if (!tmpFilterClause.ClauseKey)
+				{
+					tmpFilterClause.ClauseKey = tmpFilterKey;
+				}
+				if (!tmpFilterClause.DisplayName)
+				{
+					tmpFilterClause.DisplayName = tmpFieldHumanName;
+				}
+				tmpFilterClause.Ordinal = tmpFieldFilterSchema.AvailableClauses.length + 1;
 			}
 		}
 	}
