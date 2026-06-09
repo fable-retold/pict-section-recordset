@@ -709,12 +709,18 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		{
 			tmpProvider.upsertQuickFilterClauseValue(pField, pClauseKey, (pValue === undefined || pValue === null) ? '' : String(pValue).trim());
 		}
-		this.handleSearch(null, pRecordSet, pViewContext);
+		// Stage the clause into the active filter state but DON'T fetch — the
+		// user explicitly clicks Apply / Search to commit. Avoids two URL fetches
+		// (one stale, one not) when adjacent inputs change in quick succession
+		// (e.g. the From / To dates of a DateRange both fire `change` events
+		// within ~50ms — the GE-only fetch finishes after the GE+LE fetch and
+		// overwrites the recordset state with stale data).
 	}
 
 	/**
-	 * Apply a date-range quick filter: set one bound (`start`/`end`) of the field's DateRange clause
-	 * (removed when both bounds clear), then run the search.
+	 * Stage one bound (`start`/`end`) of a field's DateRange quick-filter clause.
+	 * Doesn't fire the search — that waits for the user to click Apply / Search,
+	 * so the From and To inputs change once each without racing the fetch.
 	 *
 	 * @param {string} pRecordSet @param {string} pViewContext @param {string} pField @param {string} pClauseKey @param {'start'|'end'} pWhich @param {string} pValue
 	 */
@@ -726,12 +732,11 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		{
 			tmpProvider.upsertQuickFilterDateRange(pField, pClauseKey, pWhich, (pValue === undefined || pValue === null) ? '' : pValue);
 		}
-		this.handleSearch(null, pRecordSet, pViewContext);
 	}
 
 	/**
-	 * Apply an entity quick filter: set the field's entity clause to the picked value (removed when
-	 * cleared), then run the search. Called from the quick-bar picker's OnChange.
+	 * Stage a field's entity quick-filter selection. Doesn't fire the search —
+	 * commit happens on Apply / Search.
 	 *
 	 * @param {string} pRecordSet @param {string} pViewContext @param {string} pField @param {string} pClauseKey @param {any} pValue
 	 */
@@ -743,7 +748,6 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		{
 			tmpProvider.upsertQuickFilterEntity(pField, pClauseKey, pValue);
 		}
-		this.handleSearch(null, pRecordSet, pViewContext);
 	}
 
 	/**
