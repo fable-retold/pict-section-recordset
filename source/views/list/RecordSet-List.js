@@ -192,8 +192,20 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			// When the list is already on screen, scope the spinner to just the rows area so the title,
 			// filters, and pagination stay put (and the expensive filter view isn't disturbed). On the first
 			// render the rows container doesn't exist yet, so fall back to the whole list destination.
-			const tmpRowsContainerPresent = this.pict.ContentAssignment.getElement('#PRSP_RecordList_Container').length > 0;
+			const tmpRowsElements = this.pict.ContentAssignment.getElement('#PRSP_RecordList_Container');
+			const tmpRowsContainerPresent = tmpRowsElements.length > 0;
 			const tmpDestination = tmpRowsContainerPresent ? '#PRSP_RecordList_Container' : pRecordListData.RenderDestination;
+			if (tmpRowsContainerPresent)
+			{
+				// Pin the rows area to its current height before swapping in the (short) spinner, so the page
+				// doesn't collapse and yank the content below it — pagination, the page's footer/colored fill —
+				// up into the fold and back. The floor is released once the real rows render (see _paintRecordList).
+				const tmpCurrentHeight = tmpRowsElements[0].offsetHeight;
+				if (tmpCurrentHeight > 0)
+				{
+					tmpRowsElements[0].style.minHeight = `${ tmpCurrentHeight }px`;
+				}
+			}
 			this.pict.CSSMap.injectCSS();
 			this.pict.ContentAssignment.assignContent(tmpDestination, this.pict.parseTemplateByHash('PRSP-List-LoadingShell', pRecordListData));
 		}
@@ -789,7 +801,18 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		// rows, each into its own stable container. The filter view, title, and header list are left as-is.
 		this.childViews.paginationTop.renderAsync('PRSP_Renderable_PaginationTop', '#PRSP_PaginationTop_Container', pRecordListData, null, () => { });
 		this.childViews.paginationBottom.renderAsync('PRSP_Renderable_PaginationBottom', '#PRSP_PaginationBottom_Container', pRecordListData, null, () => { });
-		this.childViews.recordList.renderAsync('PRSP_Renderable_RecordList', '#PRSP_RecordList_Container', pRecordListData, null, fLogRendered);
+		this.childViews.recordList.renderAsync('PRSP_Renderable_RecordList', '#PRSP_RecordList_Container', pRecordListData, null,
+			function (pError)
+			{
+				// Release the height floor that was pinned while the spinner showed (see _projectLoadingShell),
+				// now that the real rows are back in and the container can size to its content again.
+				const tmpRows = this.pict.ContentAssignment.getElement('#PRSP_RecordList_Container');
+				if (tmpRows.length)
+				{
+					tmpRows[0].style.minHeight = '';
+				}
+				fLogRendered(pError);
+			}.bind(this));
 	}
 
 	onInitialize()
