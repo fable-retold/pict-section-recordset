@@ -32,10 +32,18 @@ const _DEFAULT_CONFIGURATION__List = (
 		AutoSolveOrdinal: 0,
 
 		CSS: /*css*/`
-	.prsp-list-loading { display: flex; align-items: center; justify-content: center; min-height: 240px; width: 100%; }
-	.prsp-list-loading-inner { display: inline-flex; align-items: center; gap: 0.6em; color: var(--theme-color-text-muted, #64748b); font-size: 1.05rem; }
+	.prsp-list-loading { width: 100%; padding: 0.25rem 0 0.5rem; }
+	.prsp-list-loading-inner { display: inline-flex; align-items: center; gap: 0.55em; color: var(--theme-color-text-muted, #64748b); font-size: 1rem; padding: 0.5rem 0.25rem 0.7rem; }
 	.prsp-list-spinner { display: inline-flex; animation: prsp-list-spin 0.9s linear infinite; }
 	@keyframes prsp-list-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+	/* Skeleton ghost rows: a few light, theme-colored bars that fill the loading area so the preserved
+	   row height doesn't read as a white void. A bottom fade blends the last rows into the page. */
+	.prsp-list-skeleton { position: relative; animation: prsp-list-skeleton-pulse 1.8s ease-in-out infinite; }
+	@keyframes prsp-list-skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+	.prsp-list-skeleton-row { height: 2.6rem; margin: 0 0 0.7rem; border-radius: 8px; background: var(--theme-color-background-tertiary, #eceef2); }
+	.prsp-list-skeleton-row:nth-child(4n) { width: 94%; }
+	.prsp-list-skeleton-row:nth-child(5n) { width: 97%; }
+	.prsp-list-skeleton-fade { position: absolute; left: 0; right: 0; bottom: 0; height: 4.5rem; background: linear-gradient(to bottom, transparent, var(--theme-color-background-primary, #fff)); pointer-events: none; }
 	`,
 		CSSPriority: 500,
 
@@ -67,13 +75,21 @@ const _DEFAULT_CONFIGURATION__List = (
 				{
 					Hash: 'PRSP-List-LoadingShell',
 					Template: /*html*/`
-	<section id="PRSP_List_Loading" class="prsp-list-loading">
+	<div id="PRSP_List_Loading" class="prsp-list-loading">
 		<div class="prsp-list-loading-inner">
 			<span class="prsp-list-spinner" aria-hidden="true">{~I:Refresh~}</span>
 			<span class="prsp-list-loading-label">Loading…</span>
 		</div>
-	</section>
+		<div class="prsp-list-skeleton" aria-hidden="true">
+			{~TS:PRSP-List-Skeleton-Row:Record.SkeletonRows~}
+			<div class="prsp-list-skeleton-fade"></div>
+		</div>
+	</div>
 	`
+				},
+				{
+					Hash: 'PRSP-List-Skeleton-Row',
+					Template: /*html*/`<div class="prsp-list-skeleton-row"></div>`
 				}
 			],
 
@@ -195,19 +211,27 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			const tmpRowsElements = this.pict.ContentAssignment.getElement('#PRSP_RecordList_Container');
 			const tmpRowsContainerPresent = tmpRowsElements.length > 0;
 			const tmpDestination = tmpRowsContainerPresent ? '#PRSP_RecordList_Container' : pRecordListData.RenderDestination;
+			// Fill roughly the visible viewport with ghost rows (each skeleton row occupies ~53px), capped to
+			// the preserved height so a short list doesn't over-fill, and clamped to a sane range.
+			const tmpViewportHeight = (typeof window !== 'undefined' && window.innerHeight) ? window.innerHeight : 800;
+			let tmpFillHeight = tmpViewportHeight + 200;
 			if (tmpRowsContainerPresent)
 			{
-				// Pin the rows area to its current height before swapping in the (short) spinner, so the page
-				// doesn't collapse and yank the content below it — pagination, the page's footer/colored fill —
-				// up into the fold and back. The floor is released once the real rows render (see _paintRecordList).
+				// Pin the rows area to its current height before swapping in the spinner, so the page doesn't
+				// collapse and yank the content below it — pagination, the page's footer/colored fill — up into
+				// the fold and back. The floor is released once the real rows render (see _paintRecordList).
 				const tmpCurrentHeight = tmpRowsElements[0].offsetHeight;
 				if (tmpCurrentHeight > 0)
 				{
 					tmpRowsElements[0].style.minHeight = `${ tmpCurrentHeight }px`;
+					tmpFillHeight = Math.min(tmpCurrentHeight, tmpFillHeight);
 				}
 			}
+			const tmpSkeletonRowCount = Math.max(6, Math.min(60, Math.ceil(tmpFillHeight / 53)));
 			this.pict.CSSMap.injectCSS();
-			this.pict.ContentAssignment.assignContent(tmpDestination, this.pict.parseTemplateByHash('PRSP-List-LoadingShell', pRecordListData));
+			// Render the spinner + enough skeleton ghost rows to fill the visible area (so no white void shows).
+			const tmpLoadingShellData = { SkeletonRows: new Array(tmpSkeletonRowCount).fill(0) };
+			this.pict.ContentAssignment.assignContent(tmpDestination, this.pict.parseTemplateByHash('PRSP-List-LoadingShell', tmpLoadingShellData));
 		}
 		catch (pError)
 		{
