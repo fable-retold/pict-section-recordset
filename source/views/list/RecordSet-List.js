@@ -51,9 +51,9 @@ const _DEFAULT_CONFIGURATION__List = (
 		<section id="PRSP_Filters_Container">
 			{~FV:PRSP-Filters:List~}
 		</section>
-		{~V:PRSP-List-PaginationTop~}
-		{~V:PRSP-List-RecordList~}
-		{~V:PRSP-List-PaginationBottom~}
+		<div id="PRSP_PaginationTop_Container">{~V:PRSP-List-PaginationTop~}</div>
+		<div id="PRSP_RecordList_Container">{~V:PRSP-List-RecordList~}</div>
+		<div id="PRSP_PaginationBottom_Container">{~V:PRSP-List-PaginationBottom~}</div>
 	</section>
 	<!-- DefaultPackage end view template:  [PRSP-List-Template] -->
 	`
@@ -106,6 +106,11 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			recordListEntry: null,
 			paginationBottom: null
 		};
+
+		// Identity (`RecordSet::FilterString::FilterExperience`) of the list currently painted into the DOM.
+		// When a route only changes the page (Offset/PageSize) and this still matches, we re-render just the
+		// rows + pagination instead of the whole view — see handleRecordSetListRoute / _paintRecordList.
+		this._renderedListIdentity = null;
 	}
 
 	handleRecordSetListRoute(pRoutePayload)
@@ -131,7 +136,17 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		const tmpOffset = pRoutePayload.data.Offset ? pRoutePayload.data.Offset : 0;
 		const tmpPageSize = pRoutePayload.data.PageSize ? pRoutePayload.data.PageSize : 100;
 
-		return this.renderList(tmpProviderConfiguration, tmpProviderHash, tmpFilterString, tmpFilterExperience, tmpOffset, tmpPageSize);
+		// Surgical page render: when only the page changed (same RecordSet, FilterString, and
+		// FilterExperience), re-render just the rows + pagination rather than the whole list view. A full
+		// re-render rebuilds the filter view — including all of its picker/control state — which is by far
+		// the most expensive part of a list paint and entirely wasted when only paging. Requires the list to
+		// already be in the DOM (its rows container exists); otherwise we fall through to a full render.
+		const tmpListIdentity = `${pRoutePayload.data.RecordSet}::${tmpFilterString}::${tmpFilterExperience}`;
+		const tmpRenderBodyOnly = (this._renderedListIdentity === tmpListIdentity)
+			&& (this.pict.ContentAssignment.getElement('#PRSP_RecordList_Container').length > 0);
+		this._renderedListIdentity = tmpListIdentity;
+
+		return this.renderList(tmpProviderConfiguration, tmpProviderHash, tmpFilterString, tmpFilterExperience, tmpOffset, tmpPageSize, tmpRenderBodyOnly);
 	}
 
 	addRoutes(pPictRouter)
@@ -174,8 +189,13 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			{
 				return;
 			}
+			// When the list is already on screen, scope the spinner to just the rows area so the title,
+			// filters, and pagination stay put (and the expensive filter view isn't disturbed). On the first
+			// render the rows container doesn't exist yet, so fall back to the whole list destination.
+			const tmpRowsContainerPresent = this.pict.ContentAssignment.getElement('#PRSP_RecordList_Container').length > 0;
+			const tmpDestination = tmpRowsContainerPresent ? '#PRSP_RecordList_Container' : pRecordListData.RenderDestination;
 			this.pict.CSSMap.injectCSS();
-			this.pict.ContentAssignment.assignContent(pRecordListData.RenderDestination, this.pict.parseTemplateByHash('PRSP-List-LoadingShell', pRecordListData));
+			this.pict.ContentAssignment.assignContent(tmpDestination, this.pict.parseTemplateByHash('PRSP-List-LoadingShell', pRecordListData));
 		}
 		catch (pError)
 		{
@@ -230,10 +250,11 @@ class viewRecordSetList extends libPictRecordSetRecordView
 	 * @param {string} pSerializedFilterExperience
 	 * @param {number} pOffset
 	 * @param {number} pPageSize
+	 * @param {boolean} [pBodyOnly] - When true, re-render only the rows + pagination (page change), leaving the filter view intact.
 	 *
 	 * @return {Promise<void>}
 	 */
-	async renderList(pRecordSetConfiguration, pProviderHash, pFilterString, pSerializedFilterExperience, pOffset, pPageSize)
+	async renderList(pRecordSetConfiguration, pProviderHash, pFilterString, pSerializedFilterExperience, pOffset, pPageSize, pBodyOnly)
 	{
 		// Get the records
 		if (!(pProviderHash in this.pict.providers))
@@ -252,7 +273,7 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			}
 			else
 			{
-				return this.renderListFromManifest(tmpManifest, pRecordSetConfiguration, pProviderHash, pFilterString, pSerializedFilterExperience, pOffset, pPageSize);
+				return this.renderListFromManifest(tmpManifest, pRecordSetConfiguration, pProviderHash, pFilterString, pSerializedFilterExperience, pOffset, pPageSize, pBodyOnly);
 			}
 		}
 
@@ -471,25 +492,7 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		}
 		tmpRecordListData = this.onBeforeRenderList(tmpRecordListData);
 
-		this.renderAsync('PRSP_Renderable_List', tmpRecordListData.RenderDestination, tmpRecordListData,
-			function (pError)
-			{
-				if (pError)
-				{
-					this.pict.log.error(`RecordSetList: Error rendering list ${pError}`, tmpRecordListData);
-					return false;
-				}
-
-				if (this.pict.LogNoisiness > 0)
-				{
-					this.pict.log.info(`RecordSetList: Rendered list ${tmpRecordListData.RecordSet} with ${tmpRecordListData.Records.Records.length} records.`, tmpRecordListData);
-				}
-				else
-				{
-					this.pict.log.info(`RecordSetList: Rendered list ${tmpRecordListData.RecordSet} with ${tmpRecordListData.Records.Records.length} records.`);
-				}
-				return true;
-			}.bind(this));
+		this._paintRecordList(tmpRecordListData, pBodyOnly);
 	}
 
 	/**
@@ -500,10 +503,11 @@ class viewRecordSetList extends libPictRecordSetRecordView
 	 * @param {string} pSerializedFilterExperience
 	 * @param {number} pOffset
 	 * @param {number} pPageSize
+	 * @param {boolean} [pBodyOnly] - When true, re-render only the rows + pagination (page change), leaving the filter view intact.
 	 *
 	 * @return {Promise<void>}
 	 */
-	async renderListFromManifest(pManifest, pRecordSetConfiguration, pProviderHash, pFilterString, pSerializedFilterExperience, pOffset, pPageSize)
+	async renderListFromManifest(pManifest, pRecordSetConfiguration, pProviderHash, pFilterString, pSerializedFilterExperience, pOffset, pPageSize, pBodyOnly)
 	{
 		if (!pRecordSetConfiguration)
 		{
@@ -738,24 +742,54 @@ class viewRecordSetList extends libPictRecordSetRecordView
 
 		this.pict.providers.DynamicRecordsetSolver.solveDashboard(pManifest, tmpRecordListData.Records.Records);
 
-		this.renderAsync('PRSP_Renderable_List', tmpRecordListData.RenderDestination, tmpRecordListData,
-			function (pError)
-			{
-				if (pError)
-				{
-					this.pict.log.error(`RecordSetList: Error rendering list ${pError}`, tmpRecordListData);
-					return;
-				}
+		this._paintRecordList(tmpRecordListData, pBodyOnly);
+	}
 
-				if (this.pict.LogNoisiness > 0)
-				{
-					this.pict.log.info(`RecordSetList: Rendered list ${tmpRecordListData.RecordSet} with ${tmpRecordListData.Records.Records.length} records.`, tmpRecordListData);
-				}
-				else
-				{
-					this.pict.log.info(`RecordSetList: Rendered list ${tmpRecordListData.RecordSet} with ${tmpRecordListData.Records.Records.length} records.`);
-				}
-			}.bind(this));
+	/**
+	 * Paint the computed record-list data into the DOM.
+	 *
+	 * Full render (pBodyOnly falsy): render the whole `PRSP_Renderable_List` (title, header, filters,
+	 * pagination, rows) into the list destination — the original behavior.
+	 *
+	 * Body-only render (pBodyOnly true): only the page changed, so re-render just the rows and the two
+	 * pagination strips into their stable containers, leaving the filter view (and its picker/control state)
+	 * completely untouched. Each child is rendered with the freshly-computed record passed as an object, so
+	 * it produces exactly what the inline `{~V:~}` render would have.
+	 *
+	 * @param {Record<string, any>} pRecordListData - The fully-computed list data (records, pagination, cells).
+	 * @param {boolean} [pBodyOnly] - When true, surgically re-render only rows + pagination.
+	 * @return {void}
+	 */
+	_paintRecordList(pRecordListData, pBodyOnly)
+	{
+		const fLogRendered = function (pError)
+		{
+			if (pError)
+			{
+				this.pict.log.error(`RecordSetList: Error rendering list ${pError}`, pRecordListData);
+				return;
+			}
+			if (this.pict.LogNoisiness > 0)
+			{
+				this.pict.log.info(`RecordSetList: Rendered list ${pRecordListData.RecordSet} with ${pRecordListData.Records.Records.length} records.`, pRecordListData);
+			}
+			else
+			{
+				this.pict.log.info(`RecordSetList: Rendered list ${pRecordListData.RecordSet} with ${pRecordListData.Records.Records.length} records.`);
+			}
+		}.bind(this);
+
+		if (!pBodyOnly)
+		{
+			this.renderAsync('PRSP_Renderable_List', pRecordListData.RenderDestination, pRecordListData, fLogRendered);
+			return;
+		}
+
+		// Page-only change: re-render the two pagination strips (current page + "showing X of Y") and the
+		// rows, each into its own stable container. The filter view, title, and header list are left as-is.
+		this.childViews.paginationTop.renderAsync('PRSP_Renderable_PaginationTop', '#PRSP_PaginationTop_Container', pRecordListData, null, () => { });
+		this.childViews.paginationBottom.renderAsync('PRSP_Renderable_PaginationBottom', '#PRSP_PaginationBottom_Container', pRecordListData, null, () => { });
+		this.childViews.recordList.renderAsync('PRSP_Renderable_RecordList', '#PRSP_RecordList_Container', pRecordListData, null, fLogRendered);
 	}
 
 	onInitialize()
