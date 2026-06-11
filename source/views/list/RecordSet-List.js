@@ -8,6 +8,7 @@ const viewRecordList = require('./RecordSet-List-RecordList.js');
 const viewRecordListHeader = require('./RecordSet-List-RecordListHeader.js');
 const viewRecordListEntry = require('./RecordSet-List-RecordListEntry.js');
 const viewPaginationBottom = require('./RecordSet-List-PaginationBottom.js');
+const viewColumnChooser = require('./RecordSet-List-ColumnChooser.js');
 
 /** @type {Record<string, any>} */
 const _DEFAULT_CONFIGURATION__List = (
@@ -59,6 +60,7 @@ const _DEFAULT_CONFIGURATION__List = (
 		<section id="PRSP_Filters_Container">
 			{~FV:PRSP-Filters:List~}
 		</section>
+		<div id="PRSP_ColumnChooser_Container">{~V:PRSP-List-ColumnChooser~}</div>
 		<div id="PRSP_PaginationTop_Container">{~V:PRSP-List-PaginationTop~}</div>
 		<div id="PRSP_RecordList_Container">{~V:PRSP-List-RecordList~}</div>
 		<div id="PRSP_PaginationBottom_Container">{~V:PRSP-List-PaginationBottom~}</div>
@@ -120,13 +122,20 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			recordList: null,
 			recordListHeader: null,
 			recordListEntry: null,
-			paginationBottom: null
+			paginationBottom: null,
+			columnChooser: null
 		};
 
 		// Identity (`RecordSet::FilterString::FilterExperience`) of the list currently painted into the DOM.
 		// When a route only changes the page (Offset/PageSize) and this still matches, we re-render just the
 		// rows + pagination instead of the whole view — see handleRecordSetListRoute / _paintRecordList.
 		this._renderedListIdentity = null;
+
+		// The last fully-composed list data (carrying the pristine ColumnCandidates) and the arguments of
+		// the last render call — together they let a column-visibility toggle repaint the rows from data
+		// already in hand (or, when a Lite fetch is missing the column, rerun the same render to refetch).
+		this._lastRecordListData = null;
+		this._lastListRenderArgs = null;
 	}
 
 	handleRecordSetListRoute(pRoutePayload)
@@ -240,13 +249,19 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		}
 	}
 
-	dynamicallyGenerateColumns(pRecordListData)
+	/**
+	 * The schema columns that never become list columns automatically: the entity's own
+	 * identity pair plus the audit stamps. (Hosts that want one of these in the column
+	 * chooser declare it as a curated column, optionally with DefaultHidden.)
+	 *
+	 * @param {string} pEntity - The entity name (for the ID/GUID identity columns)
+	 * @return {Array<string>} The excluded column names.
+	 */
+	_getExcludedSchemaColumns(pEntity)
 	{
-		pRecordListData.TableCells = [];
-		const tmpEntity = pRecordListData.RecordSetConfiguration.Entity;
-		this.excludedByDefaultCells = [
-			'ID' + tmpEntity,
-			'GUID' + tmpEntity,
+		return [
+			'ID' + pEntity,
+			'GUID' + pEntity,
 			'CreateDate',
 			'CreatingIDUser',
 			'DeleteDate',
@@ -255,6 +270,13 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			'UpdateDate',
 			'UpdatingIDUser',
 		];
+	}
+
+	dynamicallyGenerateColumns(pRecordListData)
+	{
+		pRecordListData.TableCells = [];
+		const tmpEntity = pRecordListData.RecordSetConfiguration.Entity;
+		this.excludedByDefaultCells = this._getExcludedSchemaColumns(tmpEntity);
 
 		const tmpSchema = pRecordListData.RecordSchema;
 		const tmpProperties = tmpSchema?.properties;
@@ -280,6 +302,190 @@ class viewRecordSetList extends libPictRecordSetRecordView
 	}
 
 	/**
+	 * Map column name -> Meadow column Type from the entity schema, when available. The schema
+	 * endpoint nests the canonical column array at MeadowSchema.MeadowSchema.Schema (with a
+	 * legacy flat MeadowSchema.Schema fallback). Returns null when neither is present (e.g.
+	 * non-Meadow providers) so callers can skip type-based exclusions.
+	 *
+	 * @param {Record<string, any>} pRecordSchema - The schema from getRecordSchema()
+	 * @return {Record<string, string>|null} Column name -> Type map, or null.
+	 */
+	_getMeadowColumnTypes(pRecordSchema)
+	{
+		const tmpSchemaColumns = pRecordSchema?.MeadowSchema?.MeadowSchema?.Schema || pRecordSchema?.MeadowSchema?.Schema;
+		if (!Array.isArray(tmpSchemaColumns) || tmpSchemaColumns.length < 1)
+		{
+			return null;
+		}
+		/** @type {Record<string, string>} */
+		const tmpColumnTypes = {};
+		for (const tmpColumn of tmpSchemaColumns)
+		{
+			if (tmpColumn && tmpColumn.Column)
+			{
+				tmpColumnTypes[tmpColumn.Column] = tmpColumn.Type;
+			}
+		}
+		return tmpColumnTypes;
+	}
+
+	/**
+	 * Whether a column candidate is effectively visible: an explicit user override wins,
+	 * otherwise the candidate's default (visible unless DefaultHidden).
+	 *
+	 * @param {Record<string, any>} pCandidate - A ColumnCandidates entry
+	 * @param {Record<string, boolean>} pOverrides - The per-recordset override map
+	 * @return {boolean}
+	 */
+	_effectiveColumnVisibility(pCandidate, pOverrides)
+	{
+		if (pOverrides && (pCandidate.Key in pOverrides))
+		{
+			return (pOverrides[pCandidate.Key] === true);
+		}
+		return (pCandidate.DefaultHidden !== true);
+	}
+
+	/**
+	 * Compute the visible TableCells for a paint from the pristine candidate list + the user's
+	 * current overrides. Cells are per-paint shallow copies so host hooks can mutate them without
+	 * bleeding into the candidates. An override set that hides everything falls back to the
+	 * default-visible set (a fully empty table is a confusing dead end).
+	 *
+	 * @param {Array<Record<string, any>>} pCandidates - The pristine ColumnCandidates
+	 * @param {string} pRecordSet - The record set (for the override lookup)
+	 * @return {Array<Record<string, any>>} The visible cells, in candidate order.
+	 */
+	_computeVisibleTableCells(pCandidates, pRecordSet)
+	{
+		const tmpColumnProvider = this.pict.providers.ColumnDataProvider;
+		const tmpOverrides = tmpColumnProvider ? tmpColumnProvider.getColumnVisibilityOverrides(pRecordSet, 'List') : {};
+		let tmpVisibleCells = pCandidates
+			.filter((pCandidate) => this._effectiveColumnVisibility(pCandidate, tmpOverrides))
+			.map((pCell) => Object.assign({}, pCell));
+		if (tmpVisibleCells.length < 1)
+		{
+			this.log.warn(`RecordSetList: column visibility overrides for [${pRecordSet}] hid every column; rendering the default-visible set instead.`);
+			tmpVisibleCells = pCandidates
+				.filter((pCandidate) => pCandidate.DefaultHidden !== true)
+				.map((pCell) => Object.assign({}, pCell));
+		}
+		return tmpVisibleCells;
+	}
+
+	/**
+	 * Compose the column-chooser candidate pool and reduce TableCells to the visible subset.
+	 *
+	 * No-op unless the recordset opts in with RecordSetListColumnChooser: true — the flag off
+	 * leaves TableCells exactly as the existing paths computed it (including the manifest's
+	 * shared array reference).
+	 *
+	 * Candidates are two tiers, in order:
+	 *  - Curated: the host-declared columns (manifest Descriptors or RecordSetListColumns),
+	 *    shallow-copied (the shared manifest TableCells entries are never mutated), default
+	 *    visible unless the column/descriptor declares DefaultHidden: true.
+	 *  - Schema: remaining scalar entity columns (identity/audit fields and blob Text/JSON
+	 *    columns excluded), default hidden, rendered via the generic ProcessCell template
+	 *    (entity-reference ID* columns resolve names exactly like dynamic columns do).
+	 *
+	 * The pristine candidates ride on pRecordListData.ColumnCandidates (module-owned — host
+	 * hooks must not mutate it); TableCells becomes per-paint copies of the visible subset.
+	 *
+	 * @param {Record<string, any>} pRecordListData - The list data (TableCells already computed)
+	 * @return {Record<string, any>} The same list data, candidates composed.
+	 */
+	_composeColumnCandidates(pRecordListData)
+	{
+		// Always an array (empty = render nothing): a missing address would make the chooser
+		// button's {~TS:~} iterate the record object's own keys instead of rendering nothing.
+		pRecordListData.ColumnChooserSlot = [];
+		const tmpConfig = pRecordListData.RecordSetConfiguration;
+		if (!tmpConfig || tmpConfig.RecordSetListColumnChooser !== true)
+		{
+			return pRecordListData;
+		}
+
+		// Curated tier: shallow copies of whatever the host declared, flagged with source + default.
+		const tmpCandidates = (pRecordListData.TableCells || []).map((pCell) =>
+			Object.assign({}, pCell, { Source: 'Curated', DefaultHidden: (pCell.DefaultHidden === true) }));
+		const tmpCuratedKeys = {};
+		for (const tmpCell of tmpCandidates)
+		{
+			tmpCuratedKeys[tmpCell.Key] = true;
+		}
+
+		// Schema tier: every remaining scalar entity column, default hidden.
+		const tmpExcludedColumns = this._getExcludedSchemaColumns(tmpConfig.Entity);
+		const tmpProperties = pRecordListData.RecordSchema?.properties;
+		const tmpMeadowColumnTypes = this._getMeadowColumnTypes(pRecordListData.RecordSchema);
+		const tmpBlobTypes = { 'Text': true, 'JSON': true };
+		const tmpSchemaCandidates = [];
+		for (const tmpColumn in tmpProperties)
+		{
+			if (!tmpProperties.hasOwnProperty(tmpColumn) || tmpCuratedKeys[tmpColumn] || tmpExcludedColumns.includes(tmpColumn))
+			{
+				continue;
+			}
+			// When the Meadow schema is available, only offer real non-blob columns — a JSON-schema-only
+			// property is not fetchable by a Lite projection, and blob columns are why Lite exists.
+			if (tmpMeadowColumnTypes && (!(tmpColumn in tmpMeadowColumnTypes) || tmpBlobTypes[tmpMeadowColumnTypes[tmpColumn]]))
+			{
+				continue;
+			}
+			tmpSchemaCandidates.push(
+				{
+					Key: tmpColumn,
+					DisplayName: tmpProperties[tmpColumn].title || tmpColumn,
+					ManifestHash: 'Default',
+					PictDashboard: { ValueTemplate: '{~ProcessCell:Record.Data.Key~}' },
+					Source: 'Schema',
+					DefaultHidden: true,
+				});
+		}
+		tmpSchemaCandidates.sort((pA, pB) => String(pA.DisplayName).localeCompare(String(pB.DisplayName)));
+
+		// Audit tier: the identity pair + audit stamps, with friendly labels, trailing the schema
+		// tier. Default hidden; the create/update/delete user references resolve names via the same
+		// ProcessCell path as any other entity-reference column. (Pair with the show-deleted filter
+		// — RecordSetListShowDeletedFilter — to make the three Deleted* columns meaningful.)
+		const tmpAuditColumnLabels =
+		{
+			[`ID${tmpConfig.Entity}`]: 'ID',
+			[`GUID${tmpConfig.Entity}`]: 'GUID',
+			'CreateDate': 'Created',
+			'CreatingIDUser': 'Created by',
+			'UpdateDate': 'Updated',
+			'UpdatingIDUser': 'Updated by',
+			'Deleted': 'Deleted',
+			'DeleteDate': 'Deleted on',
+			'DeletingIDUser': 'Deleted by',
+		};
+		const tmpAuditCandidates = [];
+		for (const tmpColumn of Object.keys(tmpAuditColumnLabels))
+		{
+			if (!tmpProperties || !tmpProperties.hasOwnProperty(tmpColumn) || tmpCuratedKeys[tmpColumn])
+			{
+				continue;
+			}
+			tmpAuditCandidates.push(
+				{
+					Key: tmpColumn,
+					DisplayName: tmpAuditColumnLabels[tmpColumn],
+					ManifestHash: 'Default',
+					PictDashboard: { ValueTemplate: '{~ProcessCell:Record.Data.Key~}' },
+					Source: 'Audit',
+					DefaultHidden: true,
+				});
+		}
+
+		pRecordListData.ColumnCandidates = tmpCandidates.concat(tmpSchemaCandidates, tmpAuditCandidates);
+		pRecordListData.TableCells = this._computeVisibleTableCells(pRecordListData.ColumnCandidates, pRecordListData.RecordSet);
+		// One-or-zero-element array driving the chooser button render (the {~TS:~} conditional trick).
+		pRecordListData.ColumnChooserSlot = [ { RecordSet: pRecordListData.RecordSet } ];
+		return pRecordListData;
+	}
+
+	/**
 	 * @param {Record<string, any>} pRecordSetConfiguration
 	 * @param {string} pProviderHash
 	 * @param {string} pFilterString
@@ -298,6 +504,10 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			this.pict.log.error(`RecordSetList: No provider found for ${pProviderHash} in RecordSet ${(pRecordSetConfiguration || {}).RecordSet}.  List Render failed.`);
 			return;
 		}
+
+		// Remember how this list was rendered so a column-visibility change can rerun the exact same
+		// render (the manifest delegation below overwrites this with its own, which is what we want).
+		this._lastListRenderArgs = { Method: 'renderList', Args: [ pRecordSetConfiguration, pProviderHash, pFilterString, pSerializedFilterExperience, pOffset, pPageSize ] };
 
 		if (pRecordSetConfiguration.RecordSetListManifestOnly)
 		{
@@ -526,6 +736,8 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		{
 			this.dynamicallyGenerateColumns(tmpRecordListData);
 		}
+		this._composeColumnCandidates(tmpRecordListData);
+		this._lastRecordListData = tmpRecordListData;
 		tmpRecordListData = this.onBeforeRenderList(tmpRecordListData);
 
 		this._paintRecordList(tmpRecordListData, pBodyOnly);
@@ -556,6 +768,11 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			this.pict.log.error(`RecordSetList: No provider found for ${pProviderHash} in ${pRecordSetConfiguration.RecordSet}.  List Render failed.`);
 			return;
 		}
+
+		// Remember how this list was rendered so a column-visibility change can rerun the exact same
+		// render. When renderList delegated here this overwrite wins — a rerun skips re-resolving the
+		// manifest — and hosts that call renderListFromManifest directly are covered the same way.
+		this._lastListRenderArgs = { Method: 'renderListFromManifest', Args: [ pManifest, pRecordSetConfiguration, pProviderHash, pFilterString, pSerializedFilterExperience, pOffset, pPageSize ] };
 
 		let tmpTitle = pRecordSetConfiguration.Title || pRecordSetConfiguration.RecordSet;
 		if (pManifest && pManifest.TitleTemplate)
@@ -774,6 +991,8 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			}
 		}
 
+		this._composeColumnCandidates(tmpRecordListData);
+		this._lastRecordListData = tmpRecordListData;
 		tmpRecordListData = this.onBeforeRenderList(tmpRecordListData);
 
 		this.pict.providers.DynamicRecordsetSolver.solveDashboard(pManifest, tmpRecordListData.Records.Records);
@@ -839,6 +1058,136 @@ class viewRecordSetList extends libPictRecordSetRecordView
 			}.bind(this));
 	}
 
+	/**
+	 * Set a column's visibility for the currently rendered list (called by the column chooser).
+	 *
+	 * Persists the override, then repaints the rows + pagination body-only from the data already
+	 * in hand — except when a Lite-fetched list is showing a schema-tier column whose values were
+	 * never fetched, in which case the same render is rerun so the provider widens the projection.
+	 *
+	 * @param {string} pRecordSet - The record set the column belongs to (stale-chooser guard)
+	 * @param {string} pKey - The column key
+	 * @param {boolean} pVisible - Whether the column should be visible
+	 * @return {boolean} The column's resulting visibility.
+	 */
+	setColumnVisibility(pRecordSet, pKey, pVisible)
+	{
+		const tmpListData = this._lastRecordListData;
+		if (!tmpListData || tmpListData.RecordSet !== pRecordSet || !Array.isArray(tmpListData.ColumnCandidates))
+		{
+			this.log.warn(`RecordSetList: setColumnVisibility for [${pRecordSet}.${pKey}] ignored — that list is not the one currently rendered.`);
+			return false;
+		}
+		const tmpCandidate = tmpListData.ColumnCandidates.find((pCandidate) => pCandidate.Key === pKey);
+		if (!tmpCandidate)
+		{
+			this.log.warn(`RecordSetList: setColumnVisibility for unknown column [${pKey}] on [${pRecordSet}] ignored.`);
+			return false;
+		}
+		const tmpColumnProvider = this.pict.providers.ColumnDataProvider;
+		if (!tmpColumnProvider)
+		{
+			return this._effectiveColumnVisibility(tmpCandidate, {});
+		}
+		// Keep at least one column visible — an all-hidden table is a confusing dead end.
+		if (pVisible !== true)
+		{
+			const tmpOverrides = tmpColumnProvider.getColumnVisibilityOverrides(pRecordSet, 'List');
+			const tmpVisibleCount = tmpListData.ColumnCandidates.filter((pCandidate) => this._effectiveColumnVisibility(pCandidate, tmpOverrides)).length;
+			if ((tmpVisibleCount <= 1) && this._effectiveColumnVisibility(tmpCandidate, tmpOverrides))
+			{
+				this.log.warn(`RecordSetList: refusing to hide the last visible column [${pKey}] on [${pRecordSet}].`);
+				return true;
+			}
+		}
+		tmpColumnProvider.setColumnVisibilityOverride(pRecordSet, 'List', pKey, (pVisible === true));
+
+		// Lite projections omit unrequested columns entirely, so a newly shown schema- or audit-tier
+		// column with no data in the fetched records needs one refetch (the provider reads the override
+		// map at fetch time and widens the projection). Curated/manifest columns are always fetched or
+		// solved, and schema/audit keys are flat — a first-record key check is sound. (The identity pair,
+		// CreatingIDUser, and UpdateDate ride free in every Lite record, so they pass the key check.)
+		const tmpRecords = (tmpListData.Records && Array.isArray(tmpListData.Records.Records)) ? tmpListData.Records.Records : [];
+		const tmpNeedsRefetch = (pVisible === true)
+			&& (tmpCandidate.Source !== 'Curated')
+			&& (tmpListData.RecordSetConfiguration && tmpListData.RecordSetConfiguration.RecordSetListLiteFetch === true)
+			&& (tmpRecords.length > 0)
+			&& !(pKey in tmpRecords[0]);
+		if (tmpNeedsRefetch)
+		{
+			this._rerunLastListRender();
+		}
+		else
+		{
+			this._repaintWithColumnState();
+		}
+		return (pVisible === true);
+	}
+
+	/**
+	 * Clear every column-visibility override for the currently rendered list and repaint with the
+	 * defaults (called by the column chooser's Reset). Never needs a refetch: resetting only
+	 * restores curated columns (always fetched) and hides schema extras.
+	 *
+	 * @param {string} pRecordSet - The record set to reset (stale-chooser guard)
+	 * @return {boolean} True when the reset happened.
+	 */
+	resetColumnVisibility(pRecordSet)
+	{
+		const tmpListData = this._lastRecordListData;
+		if (!tmpListData || tmpListData.RecordSet !== pRecordSet)
+		{
+			this.log.warn(`RecordSetList: resetColumnVisibility for [${pRecordSet}] ignored — that list is not the one currently rendered.`);
+			return false;
+		}
+		const tmpColumnProvider = this.pict.providers.ColumnDataProvider;
+		if (tmpColumnProvider)
+		{
+			tmpColumnProvider.clearColumnVisibilityOverrides(pRecordSet, 'List');
+		}
+		this._repaintWithColumnState();
+		return true;
+	}
+
+	/**
+	 * Repaint the rows + pagination (body-only) from the last composed list data, with TableCells
+	 * recomputed from the pristine candidates + current overrides. onBeforeRenderList is re-invoked
+	 * — it is the documented seam where hosts append custom cells, and rebuilding TableCells from
+	 * candidates each paint means hook mutations apply exactly once per paint. (Hosts that decorate
+	 * Records in the hook must keep that decoration idempotent; the hook already re-runs on every
+	 * page change.) No loading shell: the data is already in hand, so the swap is immediate.
+	 *
+	 * @return {void}
+	 */
+	_repaintWithColumnState()
+	{
+		const tmpSourceData = this._lastRecordListData;
+		if (!tmpSourceData || !Array.isArray(tmpSourceData.ColumnCandidates))
+		{
+			return;
+		}
+		let tmpPaintData = Object.assign({}, tmpSourceData);
+		tmpPaintData.TableCells = this._computeVisibleTableCells(tmpSourceData.ColumnCandidates, tmpSourceData.RecordSet);
+		tmpPaintData = this.onBeforeRenderList(tmpPaintData);
+		this._paintRecordList(tmpPaintData, true);
+	}
+
+	/**
+	 * Rerun the last list render with the same arguments (body-only — the list shell and filters
+	 * are already on screen). Used when a column toggle needs a refetch under Lite.
+	 *
+	 * @return {Promise<void>|undefined}
+	 */
+	_rerunLastListRender()
+	{
+		if (!this._lastListRenderArgs)
+		{
+			return;
+		}
+		const tmpArgs = this._lastListRenderArgs.Args.concat([ true ]);
+		return this[this._lastListRenderArgs.Method](...tmpArgs);
+	}
+
 	onInitialize()
 	{
 		this.childViews.headerList = this.pict.addView('PRSP-List-HeaderList', viewHeaderList.default_configuration, viewHeaderList);
@@ -849,6 +1198,7 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		this.childViews.recordListHeader = this.pict.addView('PRSP-List-RecordListHeader', viewRecordListHeader.default_configuration, viewRecordListHeader);
 		this.childViews.recordListEntry = this.pict.addView('PRSP-List-RecordListEntry', viewRecordListEntry.default_configuration, viewRecordListEntry);
 		this.childViews.paginationBottom = this.pict.addView('PRSP-List-PaginationBottom', viewPaginationBottom.default_configuration, viewPaginationBottom);
+		this.childViews.columnChooser = this.pict.addView('PRSP-List-ColumnChooser', viewColumnChooser.default_configuration, viewColumnChooser);
 
 		// Initialize the subviews
 		this.childViews.headerList.initialize();
@@ -858,6 +1208,7 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		this.childViews.recordListHeader.initialize();
 		this.childViews.recordListEntry.initialize();
 		this.childViews.paginationBottom.initialize();
+		this.childViews.columnChooser.initialize();
 
 		return super.onInitialize();
 	}

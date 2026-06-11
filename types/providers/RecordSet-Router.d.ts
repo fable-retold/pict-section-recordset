@@ -11,6 +11,7 @@ declare class PictRecordSetRouter extends libPictProvider {
             PictRecordSetApplication: typeof import("../application/Pict-Application-RecordSet.js");
             RecordSetProviderBase: typeof import("./RecordSet-RecordProvider-Base.js");
             RecordSetProviderMeadowEndpoints: typeof import("./RecordSet-RecordProvider-MeadowEndpoints.js");
+            ColumnDataProvider: typeof import("./Column-Data-Provider.js");
         }>;
     };
     pictRouter: any;

@@ -11,6 +11,7 @@ const ProviderBase = require('../providers/RecordSet-RecordProvider-Base.js');
 const ProviderMeadowEndpoints = require('../providers/RecordSet-RecordProvider-MeadowEndpoints.js');
 
 const ProviderLinkManager = require('../providers/RecordSet-Link-Manager.js');
+const libProviderColumnData = require('../providers/Column-Data-Provider.js');
 
 const ProviderRouter = require('../providers/RecordSet-Router.js');
 
@@ -101,9 +102,20 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 							resolve(pResult);
 						});
 					});
+					// A dangling reference (the target row no longer exists — e.g. a system user id that
+					// was never seeded) comes back as the endpoint's error body rather than an entity.
+					// Render the raw id, unlinked: it carries more information than a blank cell, and
+					// matches how a found-but-nameless entity already renders.
+					if (!entity || (entity.Error && entity.StatusCode))
+					{
+						return fCallback(null, value);
+					}
 					if (remote === 'User')
 					{
-						value = `${ entity.NameFirst } ${ entity.NameLast }`;
+						// Compose what the user record actually has; fall back through the common
+						// name fields rather than printing "undefined undefined".
+						const tmpUserName = [ entity.NameFirst, entity.NameLast ].filter((pPart) => (typeof(pPart) === 'string') && pPart.trim().length > 0).join(' ');
+						value = tmpUserName || entity.FullName || entity.Name || entity.LoginID || value;
 					}
 					else if (entity?.Name)
 					{
@@ -440,6 +452,13 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 
 		this.fable.addProvider('RecordSetLinkManager', {}, ProviderLinkManager);
 
+		// Column visibility persistence — only register the built-in localStorage provider when the
+		// host hasn't supplied its own (the documented seam for server-side per-user persistence).
+		if (!('ColumnDataProvider' in this.fable.providers))
+		{
+			this.fable.addProvider('ColumnDataProvider', libProviderColumnData.default_configuration, libProviderColumnData);
+		}
+
 		// Add the subviews internally and externally
 		this.pict.addTemplate(require('../templates/Pict-Template-FilterView.js'));
 		this.pict.addTemplate(require('../templates/Pict-Template-FilterInstanceViews.js'));
@@ -583,6 +602,9 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 				DisplayName: descriptor.Name || key,
 				ManifestHash: pManifest.Scope,
 				PictDashboard: tmpPictDashboard,
+				// Column-chooser default visibility: a descriptor can ship hidden-by-default and be
+				// turned on by the user (when the recordset enables RecordSetListColumnChooser).
+				DefaultHidden: (descriptor.DefaultHidden === true),
 			};
 		});
 		pManifest.TableCells = tmpTableCells;

@@ -29,7 +29,12 @@ const _DEFAULT_CONFIGURATION__Read = (
 		AutoSolveOrdinal: 0,
 
 		CSS: /*css*/`
-			.prsp-audit-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 0 0 1rem; }
+			/* Soft-deleted record banner (the ViewDeleted route) — quiet alarm, theme-token driven. */
+		.prsp-read-deleted-banner { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.85rem; padding: 0.55rem 0.85rem;
+			border: 1px solid var(--theme-color-status-error, #c0504d); border-radius: 8px; font-size: 0.92rem;
+			color: var(--theme-color-status-error, #c0504d);
+			background: color-mix(in srgb, var(--theme-color-status-error, #c0504d) 8%, transparent); }
+		.prsp-audit-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 0 0 1rem; }
 			.prsp-audit-line { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--theme-color-text-muted, #6b7686); font-size: 0.85rem; }
 			.prsp-audit-line .pict-icon { font-size: 0.8rem; }
 			.prsp-audit-line strong { color: var(--theme-color-text-secondary, #45505f); font-weight: 600; }
@@ -256,12 +261,15 @@ const _DEFAULT_CONFIGURATION__Read = (
 				{
 					Hash: 'PRSP-Read-Link-URL-Template',
 					// TODO: Double payload pattern...
-					Template: `#/PSRS/{~D:Record.Payload.Payload.RecordSet~}/View/{~DVBK:Record.Payload.Data:Record.Payload.Payload.GUIDAddress~}`
+					// Soft-deleted rows (visible via the show-deleted filter) route to ViewDeleted, whose
+					// lookup explicitly includes deleted records — a plain View would find nothing.
+					Template: `#/PSRS/{~D:Record.Payload.Payload.RecordSet~}/View{~NE:Record.Payload.Data.Deleted^Deleted~}/{~DVBK:Record.Payload.Data:Record.Payload.Payload.GUIDAddress~}`
 				},
 				// --- Record audit header (themeable; apps brand via --theme-color-* tokens) ---
 				{
 					Hash: 'PRSP-Read-RecordAuditHeader-Template',
 					Template: /*html*/`
+						{~TS:PRSP-Read-DeletedBanner-Template:AppData.PRSP_RecordAudit.DeletedBannerSlot~}
 						<div class="prsp-audit-header">
 							<div class="prsp-audit-activity">{~TS:PRSP-Read-RecordAudit-Line-Template:AppData.PRSP_RecordAudit.ActivitySlot~}</div>
 							<div class="prsp-audit-anchor">
@@ -298,6 +306,16 @@ const _DEFAULT_CONFIGURATION__Read = (
 				{
 					Hash: 'PRSP-Read-RecordAudit-Deleted-Template',
 					Template: /*html*/`<dt>Deleted</dt><dd class="is-deleted">{~DateFormat:Record.Date^MMM D, YYYY - h:mm A~} <small>by {~E:User^Record.UserID^PRSP-Read-RecordAudit-UserName-Template~}</small></dd>`
+				},
+				{
+					// Soft-deleted record banner (the ViewDeleted route, or a record deleted out from
+					// under a normal View). The one-or-zero-element DeletedBannerSlot drives it.
+					Hash: 'PRSP-Read-DeletedBanner-Template',
+					Template: /*html*/`<div class="prsp-read-deleted-banner">{~I:Warning~} This record has been deleted{~TIfAbs:PRSP-Read-DeletedBanner-Date-Template:Record:Record.HasDate^TRUE^~}.</div>`
+				},
+				{
+					Hash: 'PRSP-Read-DeletedBanner-Date-Template',
+					Template: /*html*/` on {~DateFormat:Record.Date^MMM D, YYYY - h:mm A~}`
 				},
 			],
 
@@ -404,8 +422,35 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		}
 
 		this.action = 'View';
+		this.viewingDeletedRecord = false;
 		const tmpProviderConfiguration = this.pict.PictSectionRecordSet.recordSetProviderConfigurations[pRoutePayload.data.RecordSet];
-		this.layoutType = tmpProviderConfiguration?.ReadLayout || 'Basic'; 
+		this.layoutType = tmpProviderConfiguration?.ReadLayout || 'Basic';
+		const tmpProviderHash = `RSP-Provider-${pRoutePayload.data.RecordSet}`;
+
+		tmpProviderConfiguration.RoutePayload = pRoutePayload;
+		tmpProviderConfiguration.RecordSet = pRoutePayload.data.RecordSet;
+		tmpProviderConfiguration.GUIDRecord = pRoutePayload.data.GUIDRecord;
+
+		return this.renderRead(tmpProviderConfiguration, tmpProviderHash, pRoutePayload.data.GUIDRecord);
+	}
+
+	/**
+	 * The deleted-record read route (`/PSRS/:RecordSet/ViewDeleted/:GUIDRecord`): identical to the
+	 * View route except the record lookup explicitly includes soft-deleted rows (a normal View of a
+	 * deleted record finds nothing — delete tracking filters it out — and renders broken). The flag
+	 * also rides the read data as ViewingDeletedRecord, which drives the deleted banner.
+	 */
+	handleRecordSetReadDeletedRoute(pRoutePayload)
+	{
+		if (typeof(pRoutePayload) != 'object')
+		{
+			throw new Error(`Pict RecordSet Read view route handler called with invalid route payload.`);
+		}
+
+		this.action = 'View';
+		this.viewingDeletedRecord = true;
+		const tmpProviderConfiguration = this.pict.PictSectionRecordSet.recordSetProviderConfigurations[pRoutePayload.data.RecordSet];
+		this.layoutType = tmpProviderConfiguration?.ReadLayout || 'Basic';
 		const tmpProviderHash = `RSP-Provider-${pRoutePayload.data.RecordSet}`;
 
 		tmpProviderConfiguration.RoutePayload = pRoutePayload;
@@ -423,8 +468,9 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		}
 
 		this.action = 'Edit';
+		this.viewingDeletedRecord = false;
 		const tmpProviderConfiguration = this.pict.PictSectionRecordSet.recordSetProviderConfigurations[pRoutePayload.data.RecordSet];
-		this.layoutType = tmpProviderConfiguration?.ReadLayout || 'Basic'; 
+		this.layoutType = tmpProviderConfiguration?.ReadLayout || 'Basic';
 		const tmpProviderHash = `RSP-Provider-${pRoutePayload.data.RecordSet}`;
 
 		tmpProviderConfiguration.RoutePayload = pRoutePayload;
@@ -437,6 +483,7 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 	addRoutes(pPictRouter)
 	{
 		pPictRouter.addRoute('/PSRS/:RecordSet/View/:GUIDRecord', this.handleRecordSetReadRoute.bind(this));
+		pPictRouter.addRoute('/PSRS/:RecordSet/ViewDeleted/:GUIDRecord', this.handleRecordSetReadDeletedRoute.bind(this));
 		pPictRouter.addRoute('/PSRS/:RecordSet/Edit/:GUIDRecord', this.handleRecordSetEditRoute.bind(this));
 		return true;
 	}
@@ -507,7 +554,10 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 			ActivitySlot: tmpActivitySlot,
 			CreatedSlot: tmpHasCreate ? [{ Date: pRecord.CreateDate, UserID: pRecord.CreatingIDUser }] : [],
 			UpdatedSlot: tmpHasUpdate ? [{ Date: pRecord.UpdateDate, UserID: pRecord.UpdatingIDUser }] : [],
-			DeletedSlot: tmpDeleted ? [{ Date: pRecord.DeleteDate, UserID: pRecord.DeletingIDUser }] : []
+			DeletedSlot: tmpDeleted ? [{ Date: pRecord.DeleteDate, UserID: pRecord.DeletingIDUser }] : [],
+			// The ViewDeleted route's banner: present whenever the record is soft-deleted (whether the
+			// user arrived via ViewDeleted or the record was deleted out from under a normal View).
+			DeletedBannerSlot: (!!pRecord.Deleted) ? [{ Date: pRecord.DeleteDate, UserID: pRecord.DeletingIDUser, HasDate: this._validAuditDate(pRecord.DeleteDate) }] : []
 		};
 	}
 
@@ -753,8 +803,9 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		// TODO: This should be coming from the schema but that can come after we discuss how we deal with default routing
 		tmpRecordReadData.GUIDAddress = this.pict.providers[pProviderHash].getGUIDField();
 
-		tmpRecordReadData.Record = await this.pict.providers[pProviderHash].getRecordByGUID(pRecordGUID);
+		tmpRecordReadData.Record = await this.pict.providers[pProviderHash].getRecordByGUID(pRecordGUID, this.viewingDeletedRecord === true);
 		tmpRecordReadData.RecordSchema = await this.pict.providers[pProviderHash].getRecordSchema();
+		tmpRecordReadData.ViewingDeletedRecord = (this.viewingDeletedRecord === true);
 		this.pict.AppData[`${ tmpRecordReadData.RecordSet }Details`] = tmpRecordReadData.Record;
 
 		// Build the audit header state (first-class activity line + the Details modal) for this record.
@@ -846,6 +897,14 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 					document.getElementById('PRSP-Read-EditButton').classList.add('record-button-bar-hidden');
 					document.getElementById('PRSP-Read-SaveButton').classList.remove('record-button-bar-hidden');
 					document.getElementById('PRSP-Read-CancelButton').classList.remove('record-button-bar-hidden');
+				}
+				else if (this.viewingDeletedRecord === true)
+				{
+					// A deleted record can't be edited (the Edit route's lookup excludes deleted rows) —
+					// the ViewDeleted page is read-only.
+					document.getElementById('PRSP-Read-EditButton').classList.add('record-button-bar-hidden');
+					document.getElementById('PRSP-Read-SaveButton').classList.add('record-button-bar-hidden');
+					document.getElementById('PRSP-Read-CancelButton').classList.add('record-button-bar-hidden');
 				}
 				else
 				{

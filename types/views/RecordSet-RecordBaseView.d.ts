@@ -21,6 +21,7 @@ declare class viewPictSectionRecordSetViewBase extends libPictView {
             PictRecordSetApplication: typeof import("../application/Pict-Application-RecordSet.js");
             RecordSetProviderBase: typeof import("../providers/RecordSet-RecordProvider-Base.js");
             RecordSetProviderMeadowEndpoints: typeof import("../providers/RecordSet-RecordProvider-MeadowEndpoints.js");
+            ColumnDataProvider: typeof import("../providers/Column-Data-Provider.js");
         }>;
     };
     addRoutes(pPictRouter: any): boolean;

@@ -223,6 +223,26 @@ class BookstoreApplication extends libPictRecordSet.PictRecordSetApplication
 
 		// Render the layout shell (triggers Navigation, CSS injection, and router resolve)
 		this.pict.views['Bookstore-Layout'].render();
+
+		// Deep-link restore: on a cold load with a PSRS List hash, the recordset router resolves
+		// during app init — before this shell exists — so the list renders into a missing
+		// container (and Navigo caches the route as resolved, so it will not re-fire). The list
+		// view stashed its render arguments on that first pass; mount the container and replay
+		// the render in full. (Read/Create deep links are not restored — list URLs are the ones
+		// people reload and share.)
+		if (window.location.hash && window.location.hash.indexOf('#/PSRS/') === 0)
+		{
+			let tmpContentElements = this.pict.ContentAssignment.getElement('#Bookstore-Content-Container');
+			if (tmpContentElements && tmpContentElements.length > 0)
+			{
+				tmpContentElements[0].innerHTML = '<div id="PRSP_Container"></div>';
+			}
+			const tmpListView = this.pict.views['RSP-RecordSet-List'];
+			if (tmpListView && tmpListView._lastListRenderArgs)
+			{
+				tmpListView[tmpListView._lastListRenderArgs.Method](...tmpListView._lastListRenderArgs.Args);
+			}
+		}
 	}
 
 	/**
@@ -522,6 +542,15 @@ module.exports.default_configuration.pict_configuration = (
 				// Row interaction: clicking a row opens its default (View) link; actions move into a ⋯ hover menu.
 				"RowClickOpensRecord": true,
 
+				// Column chooser: a "Columns" button above the table — curated columns first (Language
+				// ships hidden-but-available via DefaultHidden), then the remaining scalar schema
+				// columns under "More columns", then the audit columns.
+				"RecordSetListColumnChooser": true,
+
+				// Show-deleted: a quick-bar toggle that enumerates soft-deleted rows too (pairs with
+				// the audit Deleted / Deleted on / Deleted by columns in the chooser).
+				"RecordSetListShowDeletedFilter": true,
+
 				"RecordSetListColumns": [
 					{
 						"Key": "Title",
@@ -538,6 +567,11 @@ module.exports.default_configuration.pict_configuration = (
 					{
 						"Key": "PublicationYear",
 						"DisplayName": "Year"
+					},
+					{
+						"Key": "Language",
+						"DisplayName": "Language",
+						"DefaultHidden": true
 					}
 				],
 
@@ -584,6 +618,10 @@ module.exports.default_configuration.pict_configuration = (
 				"RecordSetType": "MeadowEndpoint",
 				"RecordSetMeadowEntity": "Author",
 				"RowClickOpensRecord": true,
+				// Column chooser over auto-generated (schema-derived) columns — no curated set declared.
+				"RecordSetListColumnChooser": true,
+				// Show-deleted quick-bar toggle (enumerates soft-deleted authors).
+				"RecordSetListShowDeletedFilter": true,
 
 				"RecordSetURLPrefix": "/1.0/",
 

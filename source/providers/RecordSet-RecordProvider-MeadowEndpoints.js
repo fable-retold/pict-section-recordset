@@ -161,7 +161,7 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 	}
 
 	getIDField()
-	{ 
+	{
 		if (this._Schema?.MeadowSchema?.Schema?.length)
 		{
 			for (let field of this._Schema.MeadowSchema.Schema)
@@ -175,12 +175,29 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 		return `ID${ this.options.Entity }`;
 	}
 
+	getDeletedField()
+	{
+		if (this._Schema?.MeadowSchema?.Schema?.length)
+		{
+			for (let field of this._Schema.MeadowSchema.Schema)
+			{
+				if (field.Type == 'Deleted')
+				{
+					return field.Column;
+				}
+			}
+		}
+		return 'Deleted';
+	}
+
 	/**
 	 * Get a record by its ID or GUID.
 	 *
 	 * @param {string|number} pGuid - The ID or GUID of the record.
+	 * @param {boolean} [pIncludeDeleted] - When true, also match soft-deleted records (the explicit
+	 *                                      Deleted filter suppresses the automatic `Deleted = 0`).
 	 */
-	async getRecordByGUID(pGuid)
+	async getRecordByGUID(pGuid, pIncludeDeleted)
 	{
 		if (!this.options.Entity)
 		{
@@ -190,9 +207,14 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 		{
 			this.pict.log.info(`Reading ${this.options.Entity} record by GUID`, { GUID: pGuid });
 		}
+		let tmpFilterString = `FBV~${ this.getGUIDField() }~EQ~${encodeURIComponent(pGuid)}`;
+		if (pIncludeDeleted === true)
+		{
+			tmpFilterString += `~FBL~${ this.getDeletedField() }~INN~0,1`;
+		}
 		return new Promise((resolve, reject) =>
 		{
-			this.entityProvider.getEntitySet(this.options.Entity, `FBV~${ this.getGUIDField() }~EQ~${encodeURIComponent(pGuid)}`, (pError, pResult) =>
+			this.entityProvider.getEntitySet(this.options.Entity, tmpFilterString, (pError, pResult) =>
 			{
 				if (pError)
 				{
@@ -223,6 +245,9 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 		{
 			tmpClauses.push({ Type: 'RawFilter', Value: pOptions.FilterString });
 		}
+		// (The show-deleted switch needs no special handling here: it is a real RawFilter clause in
+		// the active filter state — see setShowDeletedFilterValue on the base provider — so it rides
+		// the FilterClauses concat above into both the records and count fetches.)
 		return [ tmpClauses, tmpExperience ];
 	}
 
@@ -278,6 +303,33 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 			if (!tmpColumns.includes(tmpKey))
 			{
 				tmpColumns.push(tmpKey);
+			}
+		}
+		// Column chooser: union in user-shown schema-tier columns so a toggled-on column's data is
+		// actually fetched. Same gauntlet as the descriptors; gated on the config flag so stale
+		// stored overrides can never widen queries for lists that don't use the chooser.
+		if (tmpConfig && tmpConfig.RecordSetListColumnChooser === true && this.pict.providers.ColumnDataProvider)
+		{
+			const tmpRecordSet = (pOptions && pOptions.RecordSet) || tmpConfig.RecordSet || pEntity;
+			const tmpOverrides = this.pict.providers.ColumnDataProvider.getColumnVisibilityOverrides(tmpRecordSet, 'List');
+			for (const tmpKey of Object.keys(tmpOverrides))
+			{
+				if (tmpOverrides[tmpKey] !== true)
+				{
+					continue;
+				}
+				if (tmpKey.startsWith('ID') || tmpKey.startsWith('GUID') || tmpKey === 'CreatingIDUser' || tmpKey === 'UpdateDate')
+				{
+					continue;
+				}
+				if (!(tmpKey in tmpColumnType) || tmpBlobTypes[tmpColumnType[tmpKey]])
+				{
+					continue;
+				}
+				if (!tmpColumns.includes(tmpKey))
+				{
+					tmpColumns.push(tmpKey);
+				}
 			}
 		}
 		return tmpColumns;

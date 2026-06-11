@@ -11,6 +11,7 @@ declare class ViewRecordSetSUBSETFilters extends libPictView {
             PictRecordSetApplication: typeof import("../application/Pict-Application-RecordSet.js");
             RecordSetProviderBase: typeof import("../providers/RecordSet-RecordProvider-Base.js");
             RecordSetProviderMeadowEndpoints: typeof import("../providers/RecordSet-RecordProvider-MeadowEndpoints.js");
+            ColumnDataProvider: typeof import("../providers/Column-Data-Provider.js");
         };
     };
     chars: string;
@@ -93,6 +94,66 @@ declare class ViewRecordSetSUBSETFilters extends libPictView {
      * @param {string} pRecordSet
      */
     _paintFilterControls(pRecordSet: string): void;
+    /**
+     * Paint the Quick Filters bar into #PRSP_QuickFilters from the record set's quick-filter definitions
+     * (host config or clever defaults), each control seeded with its clause's current value. Phase 1
+     * renders the text controls; date/entity controls follow. Empty → the bar's :empty CSS hides it.
+     *
+     * @param {string} pRecordSet @param {string} pViewContext
+     */
+    _renderQuickFilters(pRecordSet: string, pViewContext: string): void;
+    /**
+     * Mount (idempotently) a pict-section-picker into a quick-filter entity host, configured from the
+     * field's entity clause descriptor (RemoteTable / search columns / value column), single-select.
+     * On change it upserts the clause + applies. Re-runs after each render (the bar repaints wholesale),
+     * mirroring the form adapter's re-mount pattern. No-op if the picker module isn't registered.
+     *
+     * @param {string} pRecordSet @param {string} pViewContext @param {Record<string, any>} pMount
+     */
+    _mountQuickFilterEntity(pRecordSet: string, pViewContext: string, pMount: Record<string, any>): void;
+    /**
+     * Apply a text quick filter: upsert (or clear) its tagged clause, then run the standard search +
+     * serialize path. Commits on blur / Enter (not per-keystroke) so the re-render never steals focus.
+     *
+     * @param {string} pRecordSet @param {string} pViewContext @param {string} pField @param {string} pClauseKey @param {string} pValue
+     */
+    /**
+     * Flip the show-deleted switch (the drawer-footer checkbox, RecordSetListShowDeletedFilter
+     * recordsets). The switch is a REAL clause — a RawFilter referencing the Deleted column, which
+     * suppresses the automatic `Deleted = 0` so soft-deleted rows enumerate — upserted into the
+     * active filter state and applied through the normal search flow. Because the clause changes
+     * the serialized filter experience, the route URL always changes: the fetch reliably fires,
+     * and the state survives reloads and shared links. Clear/Reset drop it like any clause.
+     *
+     * @param {string} pRecordSet - The record set the toggle belongs to
+     * @param {string} pViewContext - The view context (List, Dashboard)
+     * @param {boolean} pChecked - Whether deleted records should be included
+     */
+    toggleShowDeletedFilter(pRecordSet: string, pViewContext: string, pChecked: boolean): void;
+    /**
+     * Paint the show-deleted checkbox into its drawer-footer host (next to Clear/Reset/Apply),
+     * seeded from the clause's presence. Painted post-render like the quick bar; empty when the
+     * record set hasn't opted in via RecordSetListShowDeletedFilter.
+     *
+     * @param {string} pRecordSet @param {string} pViewContext
+     */
+    _renderShowDeletedControl(pRecordSet: string, pViewContext: string): void;
+    applyQuickFilterText(pRecordSet: any, pViewContext: any, pField: any, pClauseKey: any, pValue: any): void;
+    /**
+     * Stage one bound (`start`/`end`) of a field's DateRange quick-filter clause.
+     * Doesn't fire the search — that waits for the user to click Apply / Search,
+     * so the From and To inputs change once each without racing the fetch.
+     *
+     * @param {string} pRecordSet @param {string} pViewContext @param {string} pField @param {string} pClauseKey @param {'start'|'end'} pWhich @param {string} pValue
+     */
+    applyQuickFilterDate(pRecordSet: string, pViewContext: string, pField: string, pClauseKey: string, pWhich: "start" | "end", pValue: string): void;
+    /**
+     * Stage a field's entity quick-filter selection. Doesn't fire the search —
+     * commit happens on Apply / Search.
+     *
+     * @param {string} pRecordSet @param {string} pViewContext @param {string} pField @param {string} pClauseKey @param {any} pValue
+     */
+    applyQuickFilterEntity(pRecordSet: string, pViewContext: string, pField: string, pClauseKey: string, pValue: any): void;
     /**
      * @param {Event} pEvent - The DOM event that triggered the search
      * @param {string} pRecordSet - The record set being filtered

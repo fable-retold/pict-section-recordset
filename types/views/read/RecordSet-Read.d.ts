@@ -30,6 +30,14 @@ declare class viewRecordSetRead extends libPictRecordSetRecordView {
     initializeDragListener(): void;
     onAfterRender(pRenderable: any): boolean;
     handleRecordSetReadRoute(pRoutePayload: any): Promise<boolean>;
+    viewingDeletedRecord: boolean;
+    /**
+     * The deleted-record read route (`/PSRS/:RecordSet/ViewDeleted/:GUIDRecord`): identical to the
+     * View route except the record lookup explicitly includes soft-deleted rows (a normal View of a
+     * deleted record finds nothing — delete tracking filters it out — and renders broken). The flag
+     * also rides the read data as ViewingDeletedRecord, which drives the deleted banner.
+     */
+    handleRecordSetReadDeletedRoute(pRoutePayload: any): Promise<boolean>;
     handleRecordSetEditRoute(pRoutePayload: any): Promise<boolean>;
     cancel(): Promise<void>;
     save(): Promise<void>;

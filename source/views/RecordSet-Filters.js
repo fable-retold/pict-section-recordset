@@ -88,6 +88,12 @@ const _DEFAULT_CONFIGURATION_SUBSET_Filter =
 .prsp-quickfilter-dash { color: var(--theme-color-text-muted, #6b7686); }
 /* Entity quick control: the pict-section-picker mounts into this host (its own .pps chrome themes it). */
 .prsp-quickfilter-entityhost { display: inline-block; width: 14rem; max-width: 100%; vertical-align: middle; }
+/* Show-deleted switch (RecordSetListShowDeletedFilter): a labeled checkbox in the drawer actions row.
+   Painted post-render into the host label; :empty hides it for record sets that haven't opted in. */
+.prsp-filters-showdeleted { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; user-select: none;
+	font-size: 0.88rem; color: var(--theme-color-text-secondary, #45505f); margin-right: 0.35rem; }
+.prsp-filters-showdeleted:empty { display: none; }
+.prsp-filters-showdeleted-checkbox { width: 1.05rem; height: 1.05rem; cursor: pointer; accent-color: var(--theme-color-brand-primary, #156dd1); }
 
 /* Module-owned "Add filter" popover (replaces the old native <select> pickers). */
 /* Fixed (viewport-anchored) + JS-positioned on open, so no ancestor overflow:hidden — the filter card,
@@ -196,6 +202,7 @@ const _DEFAULT_CONFIGURATION_SUBSET_Filter =
 			Template: /*html*/`
 	<!-- DefaultPackage pict view template: [PRSP-SUBSET-Filters-Template-DrawerActions-Fieldset] -->
 	<div class="prsp-filters-actions">
+		<label class="prsp-filters-showdeleted" id="PRSP_ShowDeleted_Host" title="Include soft-deleted records in the results"></label>
 		<button type="button" class="prsp-filters-btn-text" id="PRSP_Filter_Button_Clear" title="Clear all filters to a blank state" onclick="_Pict.views['PRSP-Filters'].handleClear(event, '{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}')">Clear</button>
 		<button type="button" class="prsp-filters-btn-text" id="PRSP_Filter_Button_Reset" title="Reset all filters to the last saved/defaulted state" onclick="_Pict.views['PRSP-Filters'].handleReset(event, '{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}')">Reset</button>
 		<button type="button" class="prsp-filters-apply" id="PRSP_Filter_Button_ApplyDrawer" onclick="_Pict.views['PRSP-Filters'].handleSearch(event, '{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}')">Apply</button>
@@ -719,6 +726,51 @@ class ViewRecordSetSUBSETFilters extends libPictView
 	 *
 	 * @param {string} pRecordSet @param {string} pViewContext @param {string} pField @param {string} pClauseKey @param {string} pValue
 	 */
+	/**
+	 * Flip the show-deleted switch (the drawer-footer checkbox, RecordSetListShowDeletedFilter
+	 * recordsets). The switch is a REAL clause — a RawFilter referencing the Deleted column, which
+	 * suppresses the automatic `Deleted = 0` so soft-deleted rows enumerate — upserted into the
+	 * active filter state and applied through the normal search flow. Because the clause changes
+	 * the serialized filter experience, the route URL always changes: the fetch reliably fires,
+	 * and the state survives reloads and shared links. Clear/Reset drop it like any clause.
+	 *
+	 * @param {string} pRecordSet - The record set the toggle belongs to
+	 * @param {string} pViewContext - The view context (List, Dashboard)
+	 * @param {boolean} pChecked - Whether deleted records should be included
+	 */
+	toggleShowDeletedFilter(pRecordSet, pViewContext, pChecked)
+	{
+		const tmpProvider = this.pict.providers['RSP-Provider-' + pRecordSet];
+		if (!tmpProvider || typeof tmpProvider.setShowDeletedFilterValue !== 'function')
+		{
+			return;
+		}
+		tmpProvider.setShowDeletedFilterValue(pChecked === true);
+		this.handleSearch(null, pRecordSet, pViewContext);
+	}
+
+	/**
+	 * Paint the show-deleted checkbox into its drawer-footer host (next to Clear/Reset/Apply),
+	 * seeded from the clause's presence. Painted post-render like the quick bar; empty when the
+	 * record set hasn't opted in via RecordSetListShowDeletedFilter.
+	 *
+	 * @param {string} pRecordSet @param {string} pViewContext
+	 */
+	_renderShowDeletedControl(pRecordSet, pViewContext)
+	{
+		if (!document.getElementById('PRSP_ShowDeleted_Host')) { return; }
+		const tmpRecordSetConfiguration = this.pict.PictSectionRecordSet?.recordSetProviderConfigurations?.[pRecordSet] || {};
+		if (tmpRecordSetConfiguration.RecordSetListShowDeletedFilter !== true)
+		{
+			this.pict.ContentAssignment.assignContent('#PRSP_ShowDeleted_Host', '');
+			return;
+		}
+		const tmpProvider = this.pict.providers['RSP-Provider-' + pRecordSet];
+		const tmpChecked = (tmpProvider && typeof tmpProvider.getShowDeletedFilterValue === 'function' && tmpProvider.getShowDeletedFilterValue()) ? 'checked' : '';
+		this.pict.ContentAssignment.assignContent('#PRSP_ShowDeleted_Host',
+			`<input class="prsp-filters-showdeleted-checkbox" type="checkbox" ${tmpChecked} onchange="_Pict.views['PRSP-Filters'].toggleShowDeletedFilter('${pRecordSet}', '${pViewContext}', this.checked)"> Show deleted`);
+	}
+
 	applyQuickFilterText(pRecordSet, pViewContext, pField, pClauseKey, pValue)
 	{
 		this.bumpRenderEpoch();
@@ -1162,7 +1214,8 @@ class ViewRecordSetSUBSETFilters extends libPictView
 			if (tmpFilterRecordSet)
 			{
 				this._paintFilterControls(tmpFilterRecordSet);
-					this._renderQuickFilters(tmpFilterRecordSet, tmpFilterViewContext);
+				this._renderQuickFilters(tmpFilterRecordSet, tmpFilterViewContext);
+				this._renderShowDeletedControl(tmpFilterRecordSet, tmpFilterViewContext);
 				// (Re)render the experiences dropdown only when its container is empty — i.e. on
 				// a fresh filter render — not on every sub-render (add-filter dropdown, etc.).
 				const tmpExpContainer = document.getElementById('FilterPersistenceView-Container');

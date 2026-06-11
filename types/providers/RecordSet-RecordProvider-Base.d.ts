@@ -184,6 +184,116 @@ declare class RecordSetProviderBase extends libPictProvider {
      */
     getFilterClauses(): Array<Record<string, any>>;
     /**
+     * Resolve the quick-filter definitions for this record set. Precedence: a `QuickFilters` array config
+     * (curated) → those; `QuickFilters: false` → none (explicit per-record-set opt-out); otherwise clever
+     * defaults derived from the schema — UNLESS `pAllowCleverDefaults` is false (the host put quick filters
+     * in opt-in-only mode, so a record set shows the bar only when it sets an explicit `QuickFilters`
+     * array). Each definition resolves to a concrete clause descriptor from the field's `AvailableClauses`.
+     *
+     * @param {boolean} [pAllowCleverDefaults] - false → no clever defaults (opt-in only). Default true.
+     * @return {Array<{Field:string, Label:string, Control:string, ClauseKey:string}>}
+     */
+    getQuickFilterDefinitions(pAllowCleverDefaults?: boolean): Array<{
+        Field: string;
+        Label: string;
+        Control: string;
+        ClauseKey: string;
+    }>;
+    /**
+     * Clever defaults (zero config): the common things people filter on, detected by canonical Meadow
+     * column names on the fetched schema. Primary text (Title→Name), the audit date ranges, the audit
+     * user references. Absent `_Schema` (non-Meadow provider) → no defaults.
+     *
+     * @return {Array<{Field:string, Label?:string}>}
+     */
+    _deriveDefaultQuickFilters(): Array<{
+        Field: string;
+        Label?: string;
+    }>;
+    /**
+     * Resolve one quick-filter config entry to a renderable definition: pick the clause (explicit
+     * `ClauseKey`, else the best for a quick filter) from the field's AvailableClauses + classify it to a
+     * control type. Returns null when the field has no usable clause.
+     *
+     * @param {Record<string, any>} pEntry @return {{Field:string, Label:string, Control:string, ClauseKey:string}|null}
+     */
+    _resolveQuickFilterDefinition(pEntry: Record<string, any>): {
+        Field: string;
+        Label: string;
+        Control: string;
+        ClauseKey: string;
+    } | null;
+    /**
+     * Choose the clause a quick filter should drive for a field: an entity selected-value, else a fuzzy
+     * string match, else a range — i.e. the simplest one-interaction clause the field offers.
+     *
+     * @param {Array<Record<string, any>>} pAvailableClauses @return {Record<string, any>|undefined}
+     */
+    _pickQuickClause(pAvailableClauses: Array<Record<string, any>>): Record<string, any> | undefined;
+    /**
+     * Map a clause Type to the quick-bar control that drives it.
+     * @param {string} pType @return {string|null}
+     */
+    _controlForClauseType(pType: string): string | null;
+    /**
+     * The entity's soft-delete column name. Subclasses with schema access override this
+     * (the Meadow provider resolves the column whose Type is 'Deleted').
+     * @return {string}
+     */
+    getDeletedField(): string;
+    /** @return {boolean} Whether the show-deleted clause is currently active for this record set. */
+    getShowDeletedFilterValue(): boolean;
+    /**
+     * Toggle the show-deleted clause: a RawFilter stanza that references the Deleted column
+     * explicitly, which suppresses the automatic `Deleted = 0` delete tracking so soft-deleted
+     * rows enumerate. It is a real clause in the active filter state, so it serializes into the
+     * filter experience (and the route URL) and clears with Clear like any other clause. The
+     * clause list UI skips it (no filter view for RawFilter) — the drawer checkbox is its face.
+     *
+     * @param {boolean} pOn - Whether deleted records should be included.
+     * @return {boolean} The resulting state.
+     */
+    setShowDeletedFilterValue(pOn: boolean): boolean;
+    /** @param {string} pField @return {any} The current value of a field's quick-filter clause, or ''. */
+    getQuickFilterClauseValue(pField: string): any;
+    /**
+     * Upsert (or, when the value is empty, remove) a field's quick-filter clause with a scalar value.
+     * Creates the clause from the field's descriptor on first use, tagged so it renders in the quick bar
+     * and serializes/applies like any clause.
+     *
+     * @param {string} pField @param {string} pClauseKey @param {any} pValue
+     */
+    upsertQuickFilterClauseValue(pField: string, pClauseKey: string, pValue: any): void;
+    /** @param {string} pField @return {{Start:any, End:any}} The current DateRange quick-filter bounds. */
+    getQuickFilterDateRangeValue(pField: string): {
+        Start: any;
+        End: any;
+    };
+    /**
+     * Set one bound of a field's DateRange quick-filter clause (create on first use, remove when BOTH
+     * bounds are empty). Bounds live at `clause.Values.Start` / `.End` (the DateRange contract).
+     *
+     * @param {string} pField @param {string} pClauseKey @param {'start'|'end'} pWhich @param {any} pValue
+     */
+    upsertQuickFilterDateRange(pField: string, pClauseKey: string, pWhich: "start" | "end", pValue: any): void;
+    /** @param {string} pField @return {Array<any>} The current entity quick-filter selected value(s). */
+    getQuickFilterEntityValue(pField: string): Array<any>;
+    /**
+     * Set a field's entity quick-filter clause to the picked value(s) (create on first use, remove when
+     * empty). Selected ids live at `clause.Values` (the entity-reference contract).
+     *
+     * @param {string} pField @param {string} pClauseKey @param {any} pValue scalar or array
+     */
+    upsertQuickFilterEntity(pField: string, pClauseKey: string, pValue: any): void;
+    /**
+     * Clone a field's clause descriptor into a fresh, tagged quick-filter clause (no value set yet), or
+     * null when the descriptor is missing. Shared by the text / date / entity upserts.
+     *
+     * @param {string} pField @param {string} pClauseKey @param {string} pQuickFilterKey
+     * @return {Record<string, any>|null}
+     */
+    _createQuickFilterClause(pField: string, pClauseKey: string, pQuickFilterKey: string): Record<string, any> | null;
+    /**
      * @param {string} pSpecificFilterClauseHash - The hash of the specific filter clause to move.
      * @param {number} pOrdinal - The ordinal position to move the filter clause to.
      */

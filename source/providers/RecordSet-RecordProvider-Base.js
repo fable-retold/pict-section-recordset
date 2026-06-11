@@ -490,6 +490,57 @@ class RecordSetProviderBase extends libPictProvider
 		}
 	}
 
+	/**
+	 * The entity's soft-delete column name. Subclasses with schema access override this
+	 * (the Meadow provider resolves the column whose Type is 'Deleted').
+	 * @return {string}
+	 */
+	getDeletedField()
+	{
+		return 'Deleted';
+	}
+
+	/** @return {boolean} Whether the show-deleted clause is currently active for this record set. */
+	getShowDeletedFilterValue()
+	{
+		return this.getFilterClauses().some((pClause) => pClause.ShowDeletedKey === 'ShowDeleted');
+	}
+
+	/**
+	 * Toggle the show-deleted clause: a RawFilter stanza that references the Deleted column
+	 * explicitly, which suppresses the automatic `Deleted = 0` delete tracking so soft-deleted
+	 * rows enumerate. It is a real clause in the active filter state, so it serializes into the
+	 * filter experience (and the route URL) and clears with Clear like any other clause. The
+	 * clause list UI skips it (no filter view for RawFilter) — the drawer checkbox is its face.
+	 *
+	 * @param {boolean} pOn - Whether deleted records should be included.
+	 * @return {boolean} The resulting state.
+	 */
+	setShowDeletedFilterValue(pOn)
+	{
+		const tmpClauses = this.getFilterClauses();
+		const tmpIndex = tmpClauses.findIndex((pClause) => pClause.ShowDeletedKey === 'ShowDeleted');
+		if (pOn === true)
+		{
+			if (tmpIndex < 0)
+			{
+				tmpClauses.push(
+					{
+						Type: 'RawFilter',
+						ShowDeletedKey: 'ShowDeleted',
+						Label: 'Show deleted',
+						Value: `FBL~${this.getDeletedField()}~INN~0,1`,
+					});
+			}
+			return true;
+		}
+		if (tmpIndex >= 0)
+		{
+			tmpClauses.splice(tmpIndex, 1);
+		}
+		return false;
+	}
+
 	/** @param {string} pField @return {any} The current value of a field's quick-filter clause, or ''. */
 	getQuickFilterClauseValue(pField)
 	{

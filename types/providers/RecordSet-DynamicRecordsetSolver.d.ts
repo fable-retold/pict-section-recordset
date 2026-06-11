@@ -27,6 +27,7 @@ declare class RecordSetDynamicRecordsetSolver extends libPictProvider {
             PictRecordSetApplication: typeof import("../application/Pict-Application-RecordSet.js");
             RecordSetProviderBase: typeof import("./RecordSet-RecordProvider-Base.js");
             RecordSetProviderMeadowEndpoints: typeof import("./RecordSet-RecordProvider-MeadowEndpoints.js");
+            ColumnDataProvider: typeof import("./Column-Data-Provider.js");
         }>;
     };
     /** @type {import('pict') & { instantiateServiceProviderIfNotExists: (hash: string) => any, ExpressionParser: any }} */
@@ -73,6 +74,7 @@ declare class RecordSetDynamicRecordsetSolver extends libPictProvider {
                 PictRecordSetApplication: typeof import("../application/Pict-Application-RecordSet.js");
                 RecordSetProviderBase: typeof import("./RecordSet-RecordProvider-Base.js");
                 RecordSetProviderMeadowEndpoints: typeof import("./RecordSet-RecordProvider-MeadowEndpoints.js");
+                ColumnDataProvider: typeof import("./Column-Data-Provider.js");
             }>;
         };
         AppData: Record<string, any>;
@@ -96,6 +98,7 @@ declare class RecordSetDynamicRecordsetSolver extends libPictProvider {
                 PictRecordSetApplication: typeof import("../application/Pict-Application-RecordSet.js");
                 RecordSetProviderBase: typeof import("./RecordSet-RecordProvider-Base.js");
                 RecordSetProviderMeadowEndpoints: typeof import("./RecordSet-RecordProvider-MeadowEndpoints.js");
+                ColumnDataProvider: typeof import("./Column-Data-Provider.js");
             }>;
         };
         AppData: Record<string, any>;

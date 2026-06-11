@@ -93,6 +93,30 @@ When no `RecordSetListColumns` or manifest is provided, columns are generated au
 - `UpdateDate`
 - `UpdatingIDUser`
 
+## Column Chooser (show/hide columns)
+
+Opt a record set in with `RecordSetListColumnChooser: true` to render a right-aligned "Columns" button above the table. The popover lists:
+
+- **Curated columns** — the host-declared set (manifest `Descriptors` or `RecordSetListColumns`), default visible. Mark a column or descriptor `DefaultHidden: true` to ship it hidden-but-available.
+- **More columns** — every remaining scalar schema column (identity/audit and blob `Text`/`JSON` columns excluded), default hidden, rendered via `{~ProcessCell:Record.Data.Key~}` (entity-reference `ID*` columns resolve display names automatically).
+- **Audit columns** — the identity pair + audit stamps with friendly labels (ID, GUID, Created, Created by, Updated, Updated by, Deleted, Deleted on, Deleted by), default hidden. Pair with `RecordSetListShowDeletedFilter: true` (a "Show deleted" quick-bar toggle that filters `Deleted IN (0,1)`, taking over FoxHound's automatic `Deleted = 0`) to make the three Deleted columns meaningful; deleted rows render at reduced opacity.
+
+```javascript
+RecordSetListColumnChooser: true,
+RecordSetListColumns: [
+    { Key: 'Name' },
+    { Key: 'Email' },
+    { Key: 'Notes', DefaultHidden: true }
+]
+```
+
+Behavior notes:
+
+- A toggle repaints only the rows + pagination (body-only); the filter view and its control state are never touched. At least one column always stays visible.
+- Under `RecordSetListLiteFetch`, showing a schema-tier column whose values weren't fetched triggers exactly one refetch with the Lite projection widened to include it. Curated/manifest columns are always fetched, so toggling them never refetches.
+- Choices persist per browser via the `ColumnDataProvider` (localStorage key `Column_Meta_{RecordSet}_List`; session mirror at `pict.Bundle._ActiveColumnState`). Hosts can register their own `ColumnDataProvider` before `PictSectionRecordSet.initialize()` to persist server-side.
+- `onBeforeRenderList` runs on every paint, including column repaints — `TableCells` is rebuilt from pristine candidates each time, so cell mutations apply exactly once, but record decoration in the hook must be idempotent. Cells the hook appends always render and are not listed in the chooser.
+
 ## Manifest Configuration
 
 For complex list displays, define a manifest:
@@ -133,6 +157,7 @@ The List view is composed of several child views:
 | `PRSP-List-RecordListHeader` | Table header row |
 | `PRSP-List-RecordListEntry` | Individual record rows |
 | `PRSP-List-PaginationBottom` | Bottom pagination controls |
+| `PRSP-List-ColumnChooser` | Show/hide columns popover (opt-in via `RecordSetListColumnChooser`) |
 
 ## Pagination
 

@@ -10,3 +10,4 @@ module.exports.PictRecordSetApplication = require('./application/Pict-Applicatio
 // Export the providers
 module.exports.RecordSetProviderBase = require('./providers/RecordSet-RecordProvider-Base.js');
 module.exports.RecordSetProviderMeadowEndpoints = require('./providers/RecordSet-RecordProvider-MeadowEndpoints.js');
+module.exports.ColumnDataProvider = require('./providers/Column-Data-Provider.js');

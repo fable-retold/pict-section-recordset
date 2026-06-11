@@ -78,6 +78,10 @@ class PictTemplateFilterInstanceViewInstruction extends libPictTemplate
 		// not the drawer's clause list — skip them here so they aren't rendered twice. Both the sync and
 		// async render loops treat a null view as "skip this clause".
 		if (pClause && pClause.QuickFilter) { return null; }
+		// The show-deleted switch is a RawFilter clause whose face is the drawer-footer checkbox
+		// (RecordSet-Filters._renderShowDeletedControl) — without this skip it would fall through to
+		// the Base filter card, which renders a debug dump for types with no real filter view.
+		if (pClause && pClause.ShowDeletedKey) { return null; }
 		let tmpViewHash = `PRSP-FilterType-${pClause.Type}`;
 		const tmpCustomViewHash = `${tmpViewHash}-${pClause.CustomFilterViewHash}`;
 		if (tmpCustomViewHash in this.pict.views)

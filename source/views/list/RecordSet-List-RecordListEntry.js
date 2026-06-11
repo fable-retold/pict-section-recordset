@@ -29,6 +29,9 @@ const _DEFAULT_CONFIGURATION_List_RecordListEntry = (
    top-aligned, which read as off next to the centered action cell). */
 #PRSP_List_Table td { vertical-align: middle; }
 
+/* Deleted rows (visible via the show-deleted filter) read as ghosts of themselves. */
+.prsp-list-row.prsp-row-deleted td { opacity: 0.55; }
+
 /* Row-as-button (opt-in via the RowClickOpensRecord record-set config flag): clicking anywhere in the
    row — except the action cell — follows the record's default link. */
 .prsp-list-row.prsp-row-clickable { cursor: pointer; }
@@ -72,7 +75,7 @@ const _DEFAULT_CONFIGURATION_List_RecordListEntry = (
 					// default link makes the row click a harmless no-op.
 					Template: /*html*/`
 		<!-- DefaultPackage pict view template: [PRSP-List-RecordListEntry-Template] -->
-		<tr class="prsp-list-row{~NE:Record.Payload.RecordSetConfiguration.RowClickOpensRecord^ prsp-row-clickable~}" onclick="if (this.classList.contains('prsp-row-clickable') &amp;&amp; !event.target.closest('.prsp-row-actions')) { var tmpDefaultLink = this.querySelector('.prsp-row-actions a[data-prsp-default]'); if (tmpDefaultLink) { tmpDefaultLink.click(); } }">
+		<tr class="prsp-list-row{~NE:Record.Payload.RecordSetConfiguration.RowClickOpensRecord^ prsp-row-clickable~}{~NE:Record.Data.Deleted^ prsp-row-deleted~}" onclick="if (this.classList.contains('prsp-row-clickable') &amp;&amp; !event.target.closest('.prsp-row-actions')) { var tmpDefaultLink = this.querySelector('.prsp-row-actions a[data-prsp-default]'); if (tmpDefaultLink) { tmpDefaultLink.click(); } }">
 			{~TSWP:PRSP-List-RecordListEntry-Template-Row-Cell:Record.Payload.TableCells:Record.Data~}
 			{~T:PRSP-List-RecordListHeader-Template-Extra-Row~}
 			{~T:PRSP-List-RecordListAction-Template-Cell~}
