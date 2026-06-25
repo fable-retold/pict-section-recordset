@@ -101,7 +101,8 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 			return tmpCallback(new Error('RecordSet provider cannot resolve a distinct request (missing Entity or rest client).'), []);
 		}
 		const tmpURL = `${this.options.URLPrefix || ''}${this.options.Entity}s/Distinct/${pColumn}${tmpOptions.Filter ? `/FilteredTo/${tmpOptions.Filter}` : ''}`;
-		this.entityProvider.restClient.getJSON(tmpURL, (pError, pResponse, pBody) =>
+		const tmpEntityProvider = this.entityProvider;
+		const fHandleDistinctResult = (pError, pResponse, pBody) =>
 		{
 			if (pError || (pResponse && pResponse.statusCode > 299) || !Array.isArray(pBody))
 			{
@@ -112,6 +113,25 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 			const tmpValues = [ ...new Set(pBody.map((pRecord) => pRecord && pRecord[pColumn]).filter((pValue) => pValue != null)) ];
 			this._scopeDistinctCache[tmpCacheKey] = tmpValues;
 			return tmpCallback(null, tmpValues);
+		};
+		// Route through POST /:Entity/Query (Distinct mode) when the endpoint
+		// supports it — a long /FilteredTo/ stanza on the Distinct GET is the same
+		// URI-length hazard the Query route exists to sidestep. Falls back to GET.
+		const fResolveSupport = (typeof tmpEntityProvider.resolveEntityQuerySupport === 'function')
+			? tmpEntityProvider.resolveEntityQuerySupport.bind(tmpEntityProvider)
+			: (pEntity, pPrefix, fCb) => { return fCb(null, false); };
+		fResolveSupport(this.options.Entity, this.options.URLPrefix, (pSupportError, pSupportsQuery) =>
+		{
+			if (pSupportsQuery)
+			{
+				const tmpBody = { Distinct: true, Columns: pColumn };
+				if (tmpOptions.Filter)
+				{
+					tmpBody.Filter = tmpOptions.Filter;
+				}
+				return tmpEntityProvider.restClient.postJSON({ url: `${this.options.URLPrefix || ''}${this.options.Entity}s/Query`, body: tmpBody }, fHandleDistinctResult);
+			}
+			return tmpEntityProvider.restClient.getJSON(tmpURL, fHandleDistinctResult);
 		});
 	}
 
@@ -1006,6 +1026,13 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 					return fCallback(error);
 				}
 				this._Schema = result;
+				// The schema response carries the endpoint's version/capability
+				// metadata; seed the entity provider's capability cache from it so
+				// reads avoid a redundant capability probe.
+				if (this.entityProvider && typeof this.entityProvider.primeEntityCapabilityFromSchema === 'function')
+				{
+					this.entityProvider.primeEntityCapabilityFromSchema(this.options.Entity, result, this.options.URLPrefix);
+				}
 				return fCallback(null);
 			});
 		}).catch((error) =>
