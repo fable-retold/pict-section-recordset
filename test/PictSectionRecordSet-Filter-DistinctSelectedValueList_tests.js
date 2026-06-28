@@ -121,6 +121,58 @@ suite
 
 				test
 				(
+					'When the endpoint supports Query, the distinct fetch POSTs to /Query and URL-decodes the filter into the body',
+					(fDone) =>
+					{
+						let _PostedRequests = [];
+						_Provider._EntityProvider.resolveEntityQuerySupport = (pEntity, pPrefix, fCb) => fCb(null, true);
+						_Provider._EntityProvider.restClient.postJSON = (pOptions, fCallback) =>
+						{
+							_PostedRequests.push(pOptions);
+							return fCallback(null, { statusCode: 200 }, _ResponseBody);
+						};
+						// A FoxHound stanza carrying URL-encoded characters: a space (%20) and a
+						// forward slash (%2F) that only stay intact through a GET because they live
+						// in the URL path. The POST body must carry their decoded form.
+						_Provider.getRecordSetColumnDistinct('Product', { Filter: 'FBV~Name~LK~%2FNatural%20Sand' }, (pError, pValues) =>
+						{
+							Expect(pError).to.not.exist;
+							// No GET fired — the Query route handled it.
+							Expect(_RequestedURLs.length).to.equal(0);
+							Expect(_PostedRequests.length).to.equal(1);
+							Expect(_PostedRequests[0].url).to.equal('/1.0/PrivateDataLake/Moisture/C182_Moisture_Days/Query');
+							Expect(_PostedRequests[0].body).to.deep.equal({ Distinct: true, Columns: 'Product', Filter: 'FBV~Name~LK~/Natural Sand' });
+							Expect(pValues).to.deep.equal([ '1/4" Chip', 'Natural Sand' ]);
+							fDone();
+						});
+					}
+				);
+
+				test
+				(
+					'A malformed percent-sequence in the filter is sent verbatim rather than throwing',
+					(fDone) =>
+					{
+						let _PostedRequests = [];
+						_Provider._EntityProvider.resolveEntityQuerySupport = (pEntity, pPrefix, fCb) => fCb(null, true);
+						_Provider._EntityProvider.restClient.postJSON = (pOptions, fCallback) =>
+						{
+							_PostedRequests.push(pOptions);
+							return fCallback(null, { statusCode: 200 }, _ResponseBody);
+						};
+						// A lone '%' is not a valid escape sequence; decodeURIComponent would throw.
+						_Provider.getRecordSetColumnDistinct('Product', { Filter: 'FBV~Name~LK~100%' }, (pError, pValues) =>
+						{
+							Expect(pError).to.not.exist;
+							Expect(_PostedRequests.length).to.equal(1);
+							Expect(_PostedRequests[0].body.Filter).to.equal('FBV~Name~LK~100%');
+							fDone();
+						});
+					}
+				);
+
+				test
+				(
 					'Mutations clear the distinct cache (create / update / delete)',
 					async () =>
 					{

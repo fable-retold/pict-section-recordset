@@ -127,7 +127,19 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 				const tmpBody = { Distinct: true, Columns: pColumn };
 				if (tmpOptions.Filter)
 				{
-					tmpBody.Filter = tmpOptions.Filter;
+					// The Filter is URL-encoded by contract — it is interpolated verbatim into the
+					// GET /FilteredTo/ path segment, which the server URL-decodes. A JSON body is not
+					// URL-decoded, so decode it here to keep the POST semantics identical to the GET.
+					let tmpFilter = tmpOptions.Filter;
+					try
+					{
+						tmpFilter = decodeURIComponent(tmpOptions.Filter);
+					}
+					catch (pDecodeError)
+					{
+						this.pict.log.warn(`RecordSet [${this.options.RecordSet || this.options.Entity}] could not URL-decode the distinct filter for the Query body; sending it verbatim.`, { Error: pDecodeError && pDecodeError.message, Filter: tmpOptions.Filter });
+					}
+					tmpBody.Filter = tmpFilter;
 				}
 				return tmpEntityProvider.restClient.postJSON({ url: `${this.options.URLPrefix || ''}${this.options.Entity}s/Query`, body: tmpBody }, fHandleDistinctResult);
 			}
