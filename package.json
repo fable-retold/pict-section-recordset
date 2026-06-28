@@ -1,6 +1,6 @@
 {
   "name": "pict-section-recordset",
-  "version": "1.24.0",
+  "version": "1.24.2",
   "description": "Pict dynamic record set management views",
   "main": "source/Pict-Section-RecordSet.js",
   "files": [
