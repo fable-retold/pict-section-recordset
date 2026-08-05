@@ -235,6 +235,29 @@ class PictRecordSetAssociationManager extends libPictProvider
 	}
 
 	/**
+	 * The hashes of every registered association that has the given recordset on either side (matched by
+	 * RecordSet or Entity, the same way resolveSides matches). Drives reassociation-on-delete: to reassign
+	 * a record's relationships before deleting it, we need every many-to-many join it participates in.
+	 *
+	 * @param {string} pRecordSetName
+	 * @return {Array<string>}
+	 */
+	getAssociationsForRecordSet(pRecordSetName)
+	{
+		const tmpHashes = [];
+		for (const tmpHash of Object.keys(this.associations))
+		{
+			const tmpAssociation = this.associations[tmpHash];
+			if (tmpAssociation.SideA.RecordSet === pRecordSetName || tmpAssociation.SideA.Entity === pRecordSetName
+				|| tmpAssociation.SideB.RecordSet === pRecordSetName || tmpAssociation.SideB.Entity === pRecordSetName)
+			{
+				tmpHashes.push(tmpHash);
+			}
+		}
+		return tmpHashes;
+	}
+
+	/**
 	 * Resolve which side of an association is "this side" (the rendering recordset) vs the "other side"
 	 * (the one being associated). Matches on `RecordSet` first, then `Entity`.
 	 *
@@ -607,6 +630,82 @@ class PictRecordSetAssociationManager extends libPictProvider
 				return resolve(pBody);
 			});
 		});
+	}
+
+	/**
+	 * Repoint every join row that references `pFromID` (on the given recordset's side) so it references
+	 * `pToID` instead — the many-to-many half of reassociation-on-delete ("this author's books now belong
+	 * to that author"). For each of the from-record's joins: if `pToID` is ALREADY joined to the same
+	 * other-side record, the from-join is deleted (repointing it would create a duplicate pair); otherwise
+	 * the join's this-side column is repointed via a minimal update, which preserves any rich-join config
+	 * columns (Journal/Ordinal/…). `pToID`'s existing joins are snapshotted up front so the dedup read is
+	 * clean, and each repoint extends the dedup set so two from-joins to the same other-side record can't
+	 * duplicate either.
+	 *
+	 * @param {string} pAssociationHash
+	 * @param {string} pThisRecordSetName - the recordset being deleted-from (pFromID and pToID are ids on THIS side).
+	 * @param {string|number} pFromID - the id being removed; its joins move away.
+	 * @param {string|number} pToID - the replacement id; the joins move to it.
+	 * @return {Promise<{ repointed: number, deletedDuplicate: number, failed: number }>}
+	 */
+	async repointJoins(pAssociationHash, pThisRecordSetName, pFromID, pToID)
+	{
+		const tmpResult = { repointed: 0, deletedDuplicate: 0, failed: 0 };
+		const tmpSides = this.resolveSides(pAssociationHash, pThisRecordSetName);
+		if (!tmpSides || pFromID === undefined || pFromID === null || pFromID === '' || pToID === undefined || pToID === null || pToID === '')
+		{
+			return tmpResult;
+		}
+		// Self-repoint is a no-op: moving a record's joins onto itself changes nothing, and a later delete
+		// of pFromID would then strand exactly the joins we thought we "kept".
+		if (String(pFromID) === String(pToID))
+		{
+			return tmpResult;
+		}
+
+		const tmpFromJoins = await this.listJoinRecords(pAssociationHash, pThisRecordSetName, pFromID);
+		const tmpToJoins = await this.listJoinRecords(pAssociationHash, pThisRecordSetName, pToID);
+
+		// The other-side ids pToID already links — repointing a from-join onto any of these would duplicate
+		// the pair, so those from-joins are dropped instead.
+		const tmpToOtherIDs = {};
+		for (let i = 0; i < tmpToJoins.length; i++)
+		{
+			const tmpOtherID = tmpToJoins[i][tmpSides.otherSide.JoinField];
+			if (tmpOtherID !== undefined && tmpOtherID !== null && tmpOtherID !== '')
+			{
+				tmpToOtherIDs[`${tmpOtherID}`] = true;
+			}
+		}
+
+		for (let i = 0; i < tmpFromJoins.length; i++)
+		{
+			const tmpJoin = tmpFromJoins[i];
+			const tmpOtherID = tmpJoin[tmpSides.otherSide.JoinField];
+			const tmpReal = (tmpOtherID !== undefined) && (tmpOtherID !== null) && (tmpOtherID !== '');
+			try
+			{
+				if (tmpReal && tmpToOtherIDs[`${tmpOtherID}`])
+				{
+					// pToID already links this other-side record — drop the would-be duplicate join.
+					await this.removeJoin(pAssociationHash, tmpJoin);
+					tmpResult.deletedDuplicate++;
+				}
+				else
+				{
+					// Repoint this side's column on the join row to pToID.
+					await this.updateJoin(pAssociationHash, tmpJoin, { [tmpSides.thisSide.JoinField]: pToID });
+					if (tmpReal) { tmpToOtherIDs[`${tmpOtherID}`] = true; }
+					tmpResult.repointed++;
+				}
+			}
+			catch (pError)
+			{
+				tmpResult.failed++;
+				this.pict.log.error(`AssociationManager: repointJoins failed for a [${pAssociationHash}] join (${pThisRecordSetName} ${pFromID} -> ${pToID}): ${pError.message || pError}`);
+			}
+		}
+		return tmpResult;
 	}
 
 	/**

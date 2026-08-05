@@ -209,6 +209,25 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		return true;
 	}
 
+	/**
+	 * Navigate to the Bulk Delete screen for a record set. Backs the optional list title-bar "Delete
+	 * records" button (opt in per record set via RecordSetConfiguration.RecordSetAllowBulkDelete). Routes
+	 * through the section router; falls back to the active route's record set when called without an argument.
+	 * @param {string} [pRecordSet] - The record set to bulk-delete records from.
+	 * @return {boolean} True when navigation was issued.
+	 */
+	openBulkDelete(pRecordSet)
+	{
+		const tmpRecordSet = pRecordSet || this.fable?.providers?.RecordSetRouter?.pictRouter?.router?.current?.[0]?.data?.RecordSet;
+		if (!tmpRecordSet)
+		{
+			this.log.warn(`RecordSetList: openBulkDelete called but no record set could be resolved.`);
+			return false;
+		}
+		this.fable.providers.RecordSetRouter.pictRouter.navigate(`/PSRS/${ tmpRecordSet }/BulkDelete`);
+		return true;
+	}
+
 	onBeforeRenderList(pRecordListData)
 	{
 		return pRecordListData;

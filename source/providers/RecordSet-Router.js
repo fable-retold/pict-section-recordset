@@ -51,6 +51,7 @@ class PictRecordSetRouter extends libPictProvider
 		this.pict.views['RSP-RecordSet-Associate'].addRoutes(pRouter);
 		this.pict.views['RSP-RecordSet-AssociateMatrix'].addRoutes(pRouter);
 		this.pict.views['RSP-RecordSet-AssociateUnlink'].addRoutes(pRouter);
+		this.pict.views['RSP-RecordSet-BulkDelete'].addRoutes(pRouter);
 
 		this.pict.PictSectionRecordSet.addRoutes(pRouter);
 	}

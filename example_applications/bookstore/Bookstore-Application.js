@@ -1,9 +1,8 @@
 const libPictRecordSet = require('../../source/Pict-Section-RecordSet.js');
-// pict-section-picker (sibling module, by relative path for the example) + its pict-section-form
-// 'Picker' InputType adapter — demonstrates the entity filters rendering a picker instead of the
-// built-in table UI.
-const libPictSectionPicker = require('../../../pict-section-picker');
-const libPictPickerForm = require('../../../pict-section-picker/form');
+// pict-section-picker (public package) + its pict-section-form 'Picker' InputType adapter —
+// demonstrates the entity filters rendering a picker instead of the built-in table UI.
+const libPictSectionPicker = require('pict-section-picker');
+const libPictPickerForm = require('pict-section-picker/form');
 // pict-section-modal — the host modal the association editors use for remove confirmations + toasts.
 const libPictSectionModal = require('pict-section-modal');
 const libPictRouter = require('pict-router');
@@ -668,6 +667,21 @@ module.exports.default_configuration.pict_configuration = (
 				"RecordSetType": "MeadowEndpoint",
 				"RecordSetMeadowEntity": "Book",
 
+				// Bulk + advanced delete (List "Delete records" button + Read-view Delete). Book is a side of
+				// both BookAuthor and BookStoreCatalog, so "Reassign & delete" repoints those joins to a
+				// replacement book before deleting a duplicate.
+				"RecordSetAllowBulkDelete": true,
+				"RecordSetAdvancedDelete": true,
+
+				// One-to-many dependents: child entities that carry a foreign key back at Book. Advanced
+				// delete repoints these to the replacement book BEFORE deleting a duplicate (so a Review or
+				// Pricing row is never orphaned). The harness schema also exposes Pricing / Inventory — add
+				// them here the same way once their FK columns are confirmed.
+				"RecordSetDependents":
+				[
+					{ "Entity": "Review", "FKField": "IDBook", "Title": "Reviews", "DisplayField": "Title" }
+				],
+
 				"RecordSetIgnoreFilterFields": [ "Deleted", "DeletingIDUser", "DeleteDate", "UpdateDate" ],
 
 				// Quick Filters — a curated, one-click bar above the full "Add filter" list. (Without this
@@ -798,6 +812,12 @@ module.exports.default_configuration.pict_configuration = (
 				"RecordSetType": "MeadowEndpoint",
 				"RecordSetMeadowEntity": "Author",
 				"RowClickOpensRecord": true,
+				// Bulk + advanced delete. The List toolbar gets a "Delete records" button (the BulkDelete
+				// screen); both the single (Read view) Delete and the bulk screen offer "Reassign & delete",
+				// which repoints this author's BookAuthorJoin rows to a replacement author before deleting —
+				// the "two Michael Crichton records, one misspelled, merge them" cleanup.
+				"RecordSetAllowBulkDelete": true,
+				"RecordSetAdvancedDelete": true,
 				// Column chooser over auto-generated (schema-derived) columns — no curated set declared.
 				"RecordSetListColumnChooser": true,
 				// Show-deleted quick-bar toggle (enumerates soft-deleted authors).

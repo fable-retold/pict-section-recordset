@@ -8,6 +8,7 @@ const ViewRecordSetDashboard = require('../views/dashboard/RecordSet-Dashboard.j
 const ViewRecordSetAssociate = require('../views/associate/RecordSet-AssociateBulk.js');
 const ViewRecordSetAssociateMatrix = require('../views/associate/RecordSet-AssociateMatrix.js');
 const ViewRecordSetAssociateUnlink = require('../views/associate/RecordSet-AssociateUnlink.js');
+const ViewRecordSetBulkDelete = require('../views/delete/RecordSet-BulkDelete.js');
 
 //_Pict.addProvider('BooksProvider', { Entity: 'Book', URLPrefix: 'http://www.datadebase.com:8086/1.0/' }, require('../source/providers/RecordSet-RecordProvider-MeadowEndpoints.js'));
 const ProviderBase = require('../providers/RecordSet-RecordProvider-Base.js');
@@ -15,6 +16,7 @@ const ProviderMeadowEndpoints = require('../providers/RecordSet-RecordProvider-M
 
 const ProviderLinkManager = require('../providers/RecordSet-Link-Manager.js');
 const ProviderAssociationManager = require('../providers/RecordSet-AssociationManager.js');
+const ProviderDependentManager = require('../providers/RecordSet-DependentManager.js');
 const ProviderCardManager = require('../providers/RecordSet-CardManager.js');
 const libProviderColumnData = require('../providers/Column-Data-Provider.js');
 
@@ -260,6 +262,29 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 		// column empty — so coerce it to a real true/false here, once, for every render path.
 		pRecordSetConfiguration.RowClickOpensRecord = (pRecordSetConfiguration.RowClickOpensRecord === true || pRecordSetConfiguration.RowClickOpensRecord === 'true');
 
+		// Bulk-delete opt-ins, normalized to STRICT booleans (the List title-bar button and the delete
+		// screen branch on them the same way RowClickOpensRecord does, via TIfAbs TRUE/FALSE operators).
+		pRecordSetConfiguration.RecordSetAllowBulkDelete = (pRecordSetConfiguration.RecordSetAllowBulkDelete === true || pRecordSetConfiguration.RecordSetAllowBulkDelete === 'true');
+		// Advanced delete — reassign a record's relationships to a replacement before deleting it.
+		pRecordSetConfiguration.RecordSetAdvancedDelete = (pRecordSetConfiguration.RecordSetAdvancedDelete === true || pRecordSetConfiguration.RecordSetAdvancedDelete === 'true');
+
+		// The bulk-delete screen reuses the recordset filter experience under the 'BulkDelete' view context.
+		// The filter search box builds its navigation URL from RecordSetFilterURLTemplate-<Context>; inject a
+		// BulkDelete template so a filter search navigates to the bulk-delete filtered route rather than the
+		// filter view's hardcoded List fallback. A host-provided template always wins.
+		if (pRecordSetConfiguration.RecordSetAllowBulkDelete && !pRecordSetConfiguration['RecordSetFilterURLTemplate-BulkDelete'])
+		{
+			pRecordSetConfiguration['RecordSetFilterURLTemplate-BulkDelete'] = `/PSRS/${pRecordSetConfiguration.RecordSet}/BulkDelete/FilteredTo/{~D:Record.FilterString~}`;
+		}
+
+		// One-to-many dependents (child entities with an FK back at this recordset) drive advanced-delete
+		// reassociation. Register them with the DependentManager now — the provider is registered in
+		// initialize() before any config loads, and this path also covers runtime loadRecordSetDynamically.
+		if (Array.isArray(pRecordSetConfiguration.RecordSetDependents) && this.pict.providers.RecordSetDependentManager)
+		{
+			this.pict.providers.RecordSetDependentManager.addDependents(pRecordSetConfiguration.RecordSet, pRecordSetConfiguration.RecordSetDependents);
+		}
+
 		let tmpExtraColumnHeaderTemplateHash = `RecordSet-List-ExtraColumnHeader-${pRecordSetConfiguration.RecordSet}`;
 		pRecordSetConfiguration.RecordSetListExtraColumnsHeaderTemplateHash = tmpExtraColumnHeaderTemplateHash;
 		let tmpExtraColumnRowTemplateHash = `RecordSet-List-ExtraColumnRow-${pRecordSetConfiguration.RecordSet}`;
@@ -498,6 +523,57 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 		return this.fable.providers.RecordSetLinkManager.addRecordLinkTemplate(pNameTemplate, pURLTemplate, pDefault);
 	}
 
+	/**
+	 * Reassociation-on-delete: repoint every relationship that references `pFromID` in `pRecordSet` so it
+	 * references `pToID` instead — both many-to-many joins (via the AssociationManager) and one-to-many
+	 * dependent children (via the DependentManager). Returns per-relationship results plus an aggregate
+	 * `failed` count. The CALLER must not delete `pFromID` unless `failed === 0`: there are no DB
+	 * transactions, so deleting before a clean repoint would orphan the children/joins we just moved.
+	 *
+	 * @param {string} pRecordSet
+	 * @param {string|number} pFromID - the record being deleted (its relationships move away).
+	 * @param {string|number} pToID - the replacement record the relationships move to.
+	 * @return {Promise<{ associations: Array<Record<string, any>>, dependents: Array<Record<string, any>>, repointed: number, deletedDuplicate: number, failed: number, selfRepoint: boolean }>}
+	 */
+	async repointRecordRelationships(pRecordSet, pFromID, pToID)
+	{
+		const tmpResult = { associations: [], dependents: [], repointed: 0, deletedDuplicate: 0, failed: 0, selfRepoint: false };
+		if (pFromID === undefined || pFromID === null || pFromID === '' || pToID === undefined || pToID === null || pToID === '' || String(pFromID) === String(pToID))
+		{
+			tmpResult.selfRepoint = (String(pFromID) === String(pToID));
+			return tmpResult;
+		}
+
+		const tmpAssociationManager = this.pict.providers.RecordSetAssociationManager;
+		if (tmpAssociationManager)
+		{
+			const tmpHashes = tmpAssociationManager.getAssociationsForRecordSet(pRecordSet);
+			for (let i = 0; i < tmpHashes.length; i++)
+			{
+				const tmpRepoint = await tmpAssociationManager.repointJoins(tmpHashes[i], pRecordSet, pFromID, pToID);
+				tmpResult.associations.push(Object.assign({ Association: tmpHashes[i] }, tmpRepoint));
+				tmpResult.repointed += tmpRepoint.repointed;
+				tmpResult.deletedDuplicate += tmpRepoint.deletedDuplicate;
+				tmpResult.failed += tmpRepoint.failed;
+			}
+		}
+
+		const tmpDependentManager = this.pict.providers.RecordSetDependentManager;
+		if (tmpDependentManager)
+		{
+			const tmpDependents = tmpDependentManager.getDependentsForRecordSet(pRecordSet);
+			for (let i = 0; i < tmpDependents.length; i++)
+			{
+				const tmpRepoint = await tmpDependentManager.repointDependent(tmpDependents[i], pFromID, pToID);
+				tmpResult.dependents.push(Object.assign({ Entity: tmpDependents[i].Entity, FKField: tmpDependents[i].FKField }, tmpRepoint));
+				tmpResult.repointed += tmpRepoint.repointed;
+				tmpResult.failed += tmpRepoint.failed;
+			}
+		}
+
+		return tmpResult;
+	}
+
 	initialize()
 	{
 		if (this.has_initialized)
@@ -511,6 +587,11 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 		// Joined-entity association manager — the registry + data layer behind the Association read-tab
 		// and the Bulk Associate screen. Associations are parsed from settings.Associations below.
 		this.fable.addProvider('RecordSetAssociationManager', {}, ProviderAssociationManager);
+
+		// One-to-many dependent manager — the registry + data layer for child entities that carry a foreign
+		// key back at a recordset (RecordSetDependents). Drives advanced-delete reassociation. Registered
+		// before any recordset config loads so loadRecordSetConfiguration can register dependents inline.
+		this.fable.addProvider('RecordSetDependentManager', {}, ProviderDependentManager);
 
 		// Record preview cards — a global registry of small, config-driven record cards (popover on a
 		// trigger). Layouts are parsed from settings.RecordCards below.
@@ -536,6 +617,7 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 		this.childViews.associate = this.fable.addView('RSP-RecordSet-Associate', this.options, ViewRecordSetAssociate);
 		this.childViews.associateMatrix = this.fable.addView('RSP-RecordSet-AssociateMatrix', this.options, ViewRecordSetAssociateMatrix);
 		this.childViews.associateUnlink = this.fable.addView('RSP-RecordSet-AssociateUnlink', this.options, ViewRecordSetAssociateUnlink);
+		this.childViews.bulkDelete = this.fable.addView('RSP-RecordSet-BulkDelete', this.options, ViewRecordSetBulkDelete);
 
 		// Initialize the subviews
 		this.childViews.list.initialize();
@@ -545,6 +627,7 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 		this.childViews.associate.initialize();
 		this.childViews.associateMatrix.initialize();
 		this.childViews.associateUnlink.initialize();
+		this.childViews.bulkDelete.initialize();
 
 		// Now initialize the router
 

@@ -118,11 +118,26 @@ const _DEFAULT_CONFIGURATION__Read = (
 							{
 								margin-right: 10px;
 							}
+						.record-button-bar > button.prsp-read-delete-btn
+							{
+								margin-left: auto;
+								margin-right: 0;
+								border: 1px solid var(--theme-color-status-error, #b62828);
+								background: var(--theme-color-status-error, #b62828);
+								color: #fff;
+								border-radius: 6px;
+								cursor: pointer;
+							}
+						.record-button-bar > button.prsp-read-delete-btn:hover
+							{
+								background: var(--theme-color-status-error-hover, #9c2020);
+							}
 						</style>
 						<div class="record-button-bar">
 							<button id="PRSP-Read-CancelButton" type="button" onclick="_Pict.views['RSP-RecordSet-Read'].cancel()">Cancel</button>
 							<button id="PRSP-Read-SaveButton" type="button" onclick="_Pict.views['RSP-RecordSet-Read'].save()">Save</button>
 							<button id="PRSP-Read-EditButton" type="button" onclick="_Pict.views['RSP-RecordSet-Read'].edit()">Edit</button>
+							<button id="PRSP-Read-DeleteButton" type="button" class="prsp-read-delete-btn" onclick="_Pict.views['RSP-RecordSet-Read'].deleteRecord()">Delete</button>
 						</div>
 					`
 				},
@@ -479,6 +494,84 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 	{
 		await this.onBeforeEdit();
 		this.fable.providers.RecordSetRouter.pictRouter.navigate(`/PSRS/${ this.RecordSet }/Edit/${ this.GUID }`);
+	}
+
+	/**
+	 * Delete the record being viewed. Basic path: confirm via the host modal, delete, and return to the
+	 * list. When the recordset opts into advanced delete (`RecordSetAdvancedDelete`), the modal also offers
+	 * "Reassign & delete", which hands off to the Bulk Delete screen preselected to this one record — so the
+	 * relationship-remapping UI (replacement picker) is reused rather than duplicated here.
+	 * @return {Promise<void>}
+	 */
+	async deleteRecord()
+	{
+		const tmpRecord = this.pict.AppData[`${ this.RecordSet }Details`];
+		const tmpProvider = this.pict.providers[this.providerHash];
+		if (!tmpRecord || !tmpProvider)
+		{
+			return;
+		}
+		const tmpModal = this.pict.views['Pict-Section-Modal'];
+		const tmpConfig = this.pict.PictSectionRecordSet ? this.pict.PictSectionRecordSet.recordSetProviderConfigurations[this.RecordSet] : null;
+		const tmpAdvancedEnabled = !!(tmpConfig && tmpConfig.RecordSetAdvancedDelete === true);
+
+		if (tmpAdvancedEnabled && tmpModal && typeof tmpModal.show === 'function')
+		{
+			const tmpChoice = await tmpModal.show(
+				{
+					title: 'Delete record',
+					content: '<p>Delete this record, or reassign its related records to a replacement first?</p>',
+					buttons:
+					[
+						{ Hash: 'cancel', Label: 'Cancel' },
+						{ Hash: 'reassign', Label: 'Reassign & delete…' },
+						{ Hash: 'delete', Label: 'Delete', Style: 'danger' },
+					],
+				});
+			if (tmpChoice === 'reassign')
+			{
+				const tmpIDField = tmpProvider.getIDField();
+				this.fable.providers.RecordSetRouter.pictRouter.navigate(`/PSRS/${ this.RecordSet }/BulkDelete/Record/${ tmpRecord[tmpIDField] }`);
+				return;
+			}
+			if (tmpChoice !== 'delete')
+			{
+				return;
+			}
+			return this._performDelete(tmpRecord, tmpProvider);
+		}
+
+		if (tmpModal && typeof tmpModal.confirm === 'function')
+		{
+			const tmpOk = await tmpModal.confirm('Delete this record? This cannot be undone.',
+				{ title: 'Delete record', confirmLabel: 'Delete', cancelLabel: 'Cancel', dangerous: true });
+			if (!tmpOk)
+			{
+				return;
+			}
+		}
+		return this._performDelete(tmpRecord, tmpProvider);
+	}
+
+	/**
+	 * Delete the record through the provider and return to the list (toasting the outcome).
+	 * @param {Record<string, any>} pRecord @param {any} pProvider @return {Promise<void>}
+	 */
+	async _performDelete(pRecord, pProvider)
+	{
+		const tmpModal = this.pict.views['Pict-Section-Modal'];
+		try
+		{
+			await pProvider.deleteRecord(pRecord);
+		}
+		catch (pError)
+		{
+			this.pict.log.error(`RecordSetRead: delete failed for ${ this.RecordSet }.`, pError);
+			if (tmpModal && typeof tmpModal.toast === 'function') { tmpModal.toast('Could not delete the record.', { type: 'error' }); }
+			return;
+		}
+		if (tmpModal && typeof tmpModal.toast === 'function') { tmpModal.toast('Record deleted', { type: 'success' }); }
+		this.fable.providers.RecordSetRouter.pictRouter.navigate(`/PSRS/${ this.RecordSet }/List`);
 	}
 
 	/**
@@ -898,6 +991,20 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 					document.getElementById('PRSP-Read-EditButton').classList.remove('record-button-bar-hidden');
 					document.getElementById('PRSP-Read-SaveButton').classList.add('record-button-bar-hidden');
 					document.getElementById('PRSP-Read-CancelButton').classList.add('record-button-bar-hidden');
+				}
+				// Delete is available only in read (View) mode: not while editing, and not on a record that is
+				// already soft-deleted (the ViewDeleted page is read-only).
+				const tmpDeleteButton = document.getElementById('PRSP-Read-DeleteButton');
+				if (tmpDeleteButton)
+				{
+					if (this.action == 'Edit' || this.viewingDeletedRecord === true)
+					{
+						tmpDeleteButton.classList.add('record-button-bar-hidden');
+					}
+					else
+					{
+						tmpDeleteButton.classList.remove('record-button-bar-hidden');
+					}
 				}
 				// Split opens to the record alone via the Full Record tab; other tabbed layouts default to the first tab.
 				this.setTab(this.activeTab || (this.layoutType === 'Split' ? 'FullRecord' : this.tabs?.[0]?.Hash));

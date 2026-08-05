@@ -35,6 +35,7 @@ const _DEFAULT_CONFIGURATION_List_Title =
 		<h1 id="PRSP_Title">{~D:Record.Title~}</h1>
 		<h2 id="PRSP_Subtitle">{~D:Record.Subtitle~}</h2>
 		{~TIfAbs:PRSP-List-Title-CreateButton-Template:Record:Record.RecordSetConfiguration.RecordSetListShowCreateButton^TRUE^~}
+		{~TIfAbs:PRSP-List-Title-BulkDeleteButton-Template:Record:Record.RecordSetConfiguration.RecordSetAllowBulkDelete^TRUE^~}
 	</header>
 	<!-- DefaultPackage end view template:	[PRSP-List-Title-Template] -->
 `
@@ -44,6 +45,13 @@ const _DEFAULT_CONFIGURATION_List_Title =
 			Template: /*html*/`
 	<!-- Optional list "New" action; opt in per record set via RecordSetConfiguration.RecordSetListShowCreateButton. -->
 	<button type="button" class="prsp-list-title-create" title="Create a new record" onclick="_Pict.views['RSP-RecordSet-List'].createNew('{~D:Record.RecordSet~}')">{~I:Plus~} New</button>
+`
+		},
+		{
+			Hash: 'PRSP-List-Title-BulkDeleteButton-Template',
+			Template: /*html*/`
+	<!-- Optional list "Delete records" action; opt in per record set via RecordSetConfiguration.RecordSetAllowBulkDelete. -->
+	<button type="button" class="prsp-list-title-bulkdelete" title="Select and delete a batch of records" onclick="_Pict.views['RSP-RecordSet-List'].openBulkDelete('{~D:Record.RecordSet~}')">{~I:Trash~} Delete records</button>
 `
 		},
 	],

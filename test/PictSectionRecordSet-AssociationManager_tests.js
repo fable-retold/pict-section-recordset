@@ -416,5 +416,105 @@ suite
 					Expect(await _Manager.synthesizeDefaults('ProjectObservationManifest', 'Project', 42)).to.deep.equal({ created: 0, skipped: 0 });
 				});
 			});
+
+		suite
+		(
+			'Reassociation-on-delete (repointJoins + getAssociationsForRecordSet)',
+			() =>
+			{
+				// A join-read stub that branches on the anchor id in the filter so fromID and toID can return
+				// different existing joins (repointJoins snapshots both up front for the dedup).
+				const stubJoinsByAnchor = (pField, pByID) =>
+				{
+					_Stub.getEntitySet = (pEntity, pFilter, fCallback) =>
+					{
+						_Stub.calls.push([ 'getEntitySet', pEntity, pFilter ]);
+						const tmpMatch = pFilter.match(new RegExp(`FBV~${pField}~EQ~([^~]+)`));
+						const tmpKey = tmpMatch ? tmpMatch[1] : '';
+						return fCallback(null, (pByID[tmpKey] || []).slice());
+					};
+				};
+
+				test('repoints non-colliding joins onto the replacement (this-side column updated)', async () =>
+				{
+					// Delete author 1, move his books to author 2. Neither book is already on author 2.
+					stubJoinsByAnchor('IDAuthor',
+						{
+							'1': [ { IDBookAuthorJoin: 11, IDAuthor: 1, IDBook: 7 }, { IDBookAuthorJoin: 12, IDAuthor: 1, IDBook: 8 } ],
+							'2': [],
+						});
+					_Stub.calls = [];
+					const tmpResult = await _Manager.repointJoins('BookAuthor', 'Author', 1, 2);
+					Expect(tmpResult).to.deep.equal({ repointed: 2, deletedDuplicate: 0, failed: 0 });
+					const tmpUpdates = _Stub.calls.filter((pCall) => pCall[0] === 'updateEntity');
+					Expect(tmpUpdates.length).to.equal(2, 'each join is repointed via a minimal update.');
+					Expect(tmpUpdates[0][2]).to.deep.equal({ IDBookAuthorJoin: 11, IDAuthor: 2 }, 'the this-side column is repointed to the replacement.');
+					Expect(tmpUpdates[1][2]).to.deep.equal({ IDBookAuthorJoin: 12, IDAuthor: 2 });
+					Expect(_Stub.calls.some((pCall) => pCall[0] === 'deleteEntity')).to.equal(false, 'no duplicates -> nothing deleted.');
+				});
+
+				test('drops a from-join that would duplicate an existing to-join (dedup by other-side id)', async () =>
+				{
+					// Author 2 already has book 7; moving author 1's books [7,8] must drop the 7 join, repoint 8.
+					stubJoinsByAnchor('IDAuthor',
+						{
+							'1': [ { IDBookAuthorJoin: 11, IDAuthor: 1, IDBook: 7 }, { IDBookAuthorJoin: 12, IDAuthor: 1, IDBook: 8 } ],
+							'2': [ { IDBookAuthorJoin: 20, IDAuthor: 2, IDBook: 7 } ],
+						});
+					_Stub.calls = [];
+					const tmpResult = await _Manager.repointJoins('BookAuthor', 'Author', 1, 2);
+					Expect(tmpResult).to.deep.equal({ repointed: 1, deletedDuplicate: 1, failed: 0 });
+					const tmpDeletes = _Stub.calls.filter((pCall) => pCall[0] === 'deleteEntity');
+					Expect(tmpDeletes.length).to.equal(1, 'the colliding from-join is deleted, not repointed.');
+					Expect(tmpDeletes[0][2]).to.equal(11, 'the join to the already-linked book 7 is dropped.');
+					const tmpUpdates = _Stub.calls.filter((pCall) => pCall[0] === 'updateEntity');
+					Expect(tmpUpdates.length).to.equal(1);
+					Expect(tmpUpdates[0][2]).to.deep.equal({ IDBookAuthorJoin: 12, IDAuthor: 2 }, 'only the non-colliding book 8 is repointed.');
+				});
+
+				test('is a no-op when the replacement is the record being deleted (self-repoint guard)', async () =>
+				{
+					stubJoinsByAnchor('IDAuthor', { '5': [ { IDBookAuthorJoin: 55, IDAuthor: 5, IDBook: 7 } ] });
+					_Stub.calls = [];
+					const tmpResult = await _Manager.repointJoins('BookAuthor', 'Author', 5, 5);
+					Expect(tmpResult).to.deep.equal({ repointed: 0, deletedDuplicate: 0, failed: 0 });
+					Expect(_Stub.calls.some((pCall) => pCall[0] === 'updateEntity' || pCall[0] === 'deleteEntity')).to.equal(false, 'nothing is written for a self-repoint.');
+				});
+
+				test('repoints a name-keyed this-side join column', async () =>
+				{
+					// Delete a manifest (keyed by ObservationManifestName), move its projects to another manifest.
+					_Manager.addAssociation('ProjectObservationManifest',
+						{
+							JoinEntity: 'ProjectObservationManifestJoin',
+							SideA: { RecordSet: 'Project', IDField: 'IDProject', DisplayField: 'Name' },
+							SideB: { RecordSet: 'ObservationManifest', IDField: 'Name', JoinField: 'ObservationManifestName', DisplayField: 'DisplayName' },
+						});
+					stubJoinsByAnchor('ObservationManifestName',
+						{
+							'Old': [ { IDProjectObservationManifestJoin: 3, IDProject: 42, ObservationManifestName: 'Old' } ],
+							'New': [],
+						});
+					_Stub.calls = [];
+					const tmpResult = await _Manager.repointJoins('ProjectObservationManifest', 'ObservationManifest', 'Old', 'New');
+					Expect(tmpResult.repointed).to.equal(1);
+					const tmpUpdate = _Stub.calls.find((pCall) => pCall[0] === 'updateEntity');
+					Expect(tmpUpdate[2]).to.deep.equal({ IDProjectObservationManifestJoin: 3, ObservationManifestName: 'New' }, 'the name-keyed this-side column is repointed.');
+				});
+
+				test('getAssociationsForRecordSet returns every association a recordset participates in', () =>
+				{
+					_Manager.addAssociation('BookStoreCatalog',
+						{
+							JoinEntity: 'BookStoreCatalogJoin',
+							SideA: { RecordSet: 'BookStore', IDField: 'IDBookStore' },
+							SideB: { RecordSet: 'Book', IDField: 'IDBook' },
+						});
+					Expect(_Manager.getAssociationsForRecordSet('Book')).to.have.members([ 'BookAuthor', 'BookStoreCatalog' ], 'Book is a side of both.');
+					Expect(_Manager.getAssociationsForRecordSet('Author')).to.deep.equal([ 'BookAuthor' ]);
+					Expect(_Manager.getAssociationsForRecordSet('BookStore')).to.deep.equal([ 'BookStoreCatalog' ]);
+					Expect(_Manager.getAssociationsForRecordSet('Nonexistent')).to.deep.equal([]);
+				});
+			});
 	}
 );
