@@ -1015,6 +1015,22 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 	 */
 	initializeEntitySchema(fCallback)
 	{
+		// A caller can hand this provider its schema up front (options.ProvidedSchema) -- the app
+		// manifest bundles each entity's schema so boot skips the per-entity /Schema round trip. It
+		// is the same object the /Schema endpoint returns, so every downstream reader behaves
+		// identically. When it is absent (or a schema is already loaded) we fall through to the
+		// network fetch exactly as before, so nothing that relied on the fetch breaks.
+		if (!this._Schema && this.options.ProvidedSchema && typeof this.options.ProvidedSchema === 'object')
+		{
+			this._Schema = this.options.ProvidedSchema;
+			// Seed the entity provider's capability cache from the supplied schema, the same as the
+			// fetch path below, so reads still detect POST /Query support without a probe.
+			if (this.entityProvider && typeof this.entityProvider.primeEntityCapabilityFromSchema === 'function')
+			{
+				this.entityProvider.primeEntityCapabilityFromSchema(this.options.Entity, this._Schema, this.options.URLPrefix);
+			}
+			return fCallback(null);
+		}
 		this.fable.log.info('Initializing RecordSetProvider-MeadowEndpoints');
 		const checkSession = this.pict.services.PictSectionRecordSet ? this.pict.services.PictSectionRecordSet.checkSession.bind(this.pict.services.PictSectionRecordSet) : async () => true;
 		checkSession('Schema').then(async (supported) =>
