@@ -66,6 +66,10 @@ const _DEFAULT_CONFIGURATION_AssociationEditor = (
 		.prsp-assoc-chip { flex: 0 0 auto; display: inline-flex; align-items: center; font-size: 0.72rem; font-weight: 600; line-height: 1.25;
 			padding: 0.05rem 0.4rem; border-radius: 5px; white-space: nowrap;
 			background: var(--theme-color-background-tertiary, #eceef2); color: var(--theme-color-text-secondary, #45596b); }
+		.prsp-assoc-status { flex: 0 0 auto; display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 700; line-height: 1.2; text-transform: uppercase; letter-spacing: 0.03em;
+			padding: 0.08rem 0.42rem; border-radius: 999px; white-space: nowrap; }
+		.prsp-assoc-status.is-expired { background: color-mix(in srgb, var(--theme-color-status-error, #b62828) 14%, transparent); color: var(--theme-color-status-error, #b62828); }
+		.prsp-assoc-status.is-pending { background: color-mix(in srgb, var(--theme-color-status-warning, #b7791f) 16%, transparent); color: var(--theme-color-status-warning, #97650f); }
 		.prsp-assoc-row-id { flex: 0 0 auto; font-size: 0.74rem; color: var(--theme-color-text-muted, #6b7686); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 		.prsp-assoc-remove { flex: 0 0 auto; display: inline-flex; align-items: center; cursor: pointer; border: none; background: transparent; color: var(--theme-color-text-muted, #6b7686); padding: 0.2rem; border-radius: 5px; font: inherit; }
 		.prsp-assoc-remove:hover { color: var(--theme-color-status-error, #b62828); background: color-mix(in srgb, var(--theme-color-status-error, #b62828) 10%, transparent); }
@@ -123,6 +127,7 @@ const _DEFAULT_CONFIGURATION_AssociationEditor = (
 				Template: /*html*/`
 		<div class="prsp-assoc-row">
 			<span class="prsp-assoc-row-name">{~RecordCard:Record.CardRecordSet^Record.OtherID^Record.Display~}</span>
+			{~TS:PRSP-AssociationEditor-Status:Record.StatusBadgeSlot~}
 			<span class="prsp-assoc-row-chips">{~TS:PRSP-AssociationEditor-Chip:Record.Chips~}</span>
 			<span class="prsp-assoc-row-cfg">{~TS:PRSP-AssociationEditor-EditField:Record.EditFields~}</span>
 			<span class="prsp-assoc-row-id">#{~D:Record.OtherID~}</span>
@@ -133,6 +138,12 @@ const _DEFAULT_CONFIGURATION_AssociationEditor = (
 			{
 				Hash: 'PRSP-AssociationEditor-Chip',
 				Template: /*html*/`<span class="prsp-assoc-chip">{~D:Record.Text~}</span>`
+			},
+			{
+				// A read-only status pill derived from the join record's lifecycle dates (Expired /
+				// Not yet effective). Present only when a date column signals it — see _computeStatusBadge.
+				Hash: 'PRSP-AssociationEditor-Status',
+				Template: /*html*/`<span class="prsp-assoc-status {~D:Record.Class~}" title="{~D:Record.Title~}">{~D:Record.Text~}</span>`
 			},
 			{
 				Hash: 'PRSP-AssociationEditor-SynthBtn',
@@ -257,6 +268,7 @@ class viewRecordSetAssociationEditor extends libPictView
 			tmpItems[i].ViewHash = this.Hash;
 			tmpItems[i].EditFields = this._buildEditFields(tmpEditableFields, tmpItems[i]);
 			tmpItems[i].CardRecordSet = tmpCardRecordSet;
+			tmpItems[i].StatusBadgeSlot = this._computeStatusBadge(tmpItems[i].JoinRecord);
 		}
 		this._lastItems = tmpItems;
 		this._otherIDs = tmpItems.map((pItem) => pItem.OtherID);
@@ -426,6 +438,39 @@ class viewRecordSetAssociationEditor extends libPictView
 			}
 		}
 		return fRemove();
+	}
+
+	/**
+	 * Derive a read-only lifecycle badge from a join record's conventional date columns, so an expired
+	 * (or not-yet-effective) association is obvious at a glance — e.g. an expired material↔producer link
+	 * where the row would otherwise look identical to an active one. Zero-config: it keys off the
+	 * `ExpirationDate` / `EffectiveDate` columns when present. Returns a one-or-zero-element slot.
+	 * @param {Record<string, any>} pJoinRecord
+	 * @return {Array<Record<string, any>>}
+	 */
+	_computeStatusBadge(pJoinRecord)
+	{
+		const tmpJoin = pJoinRecord || {};
+		const fParseDate = (pValue) =>
+		{
+			if (!pValue) { return null; }
+			const tmpString = String(pValue);
+			if (tmpString.indexOf('0000-00-00') === 0) { return null; }
+			const tmpDate = new Date(tmpString);
+			return Number.isNaN(tmpDate.getTime()) ? null : tmpDate;
+		};
+		const tmpNow = new Date();
+		const tmpExpiration = fParseDate(tmpJoin.ExpirationDate);
+		if (tmpExpiration && (tmpExpiration.getTime() < tmpNow.getTime()))
+		{
+			return [ { Text: 'Expired', Class: 'is-expired', Title: `Expired ${ tmpExpiration.toLocaleDateString('en-US') }` } ];
+		}
+		const tmpEffective = fParseDate(tmpJoin.EffectiveDate);
+		if (tmpEffective && (tmpEffective.getTime() > tmpNow.getTime()))
+		{
+			return [ { Text: 'Not yet effective', Class: 'is-pending', Title: `Effective ${ tmpEffective.toLocaleDateString('en-US') }` } ];
+		}
+		return [];
 	}
 
 	/**

@@ -963,13 +963,29 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 				}
 				for (const t of this.tabs)
 				{
-					if (t.renderAsync)
+					// Isolate each tab's render: the tabs share one sequential loop, so without this a single
+					// tab that throws (e.g. an association editor whose list is large enough to overflow the
+					// template-render stack) would blank not just itself but every tab AFTER it in the loop.
+					// Catch, log, drop a small notice into the failed tab's body, and keep rendering the rest.
+					try
 					{
-						await t.renderAsync();
+						if (t.renderAsync)
+						{
+							await t.renderAsync();
+						}
+						else
+						{
+							t.render();
+						}
 					}
-					else
+					catch (pTabError)
 					{
-						t.render();
+						this.pict.log.error(`RecordSetRead: tab "${ t.Title || t.Hash }" failed to render: ${ pTabError && (pTabError.message || pTabError) }`, pTabError);
+						const tmpTabBody = t.Hash ? document.getElementById(`PSRS-Tab-${ t.Hash }`) : null;
+						if (tmpTabBody && (tmpTabBody.innerHTML.trim() === ''))
+						{
+							tmpTabBody.innerHTML = `<div class="psrs-tab-error">This tab could not be displayed.</div>`;
+						}
 					}
 				}
 				if (this.action == 'Edit')
