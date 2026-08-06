@@ -7,6 +7,7 @@ module.exports =
 	DateRange: require('./RecordSet-Filter-DateRange.js'),
 	NumericMatch: require('./RecordSet-Filter-NumericMatch.js'),
 	NumericRange: require('./RecordSet-Filter-NumericRange.js'),
+	BooleanMatch: require('./RecordSet-Filter-BooleanMatch.js'),
 	StringMatch: require('./RecordSet-Filter-StringMatch.js'),
 	StringRange: require('./RecordSet-Filter-StringRange.js'),
 

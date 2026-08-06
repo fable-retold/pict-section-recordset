@@ -82,7 +82,11 @@ class PictTemplateFilterInstanceViewInstruction extends libPictTemplate
 		// (RecordSet-Filters._renderShowDeletedControl) — without this skip it would fall through to
 		// the Base filter card, which renders a debug dump for types with no real filter view.
 		if (pClause && pClause.ShowDeletedKey) { return null; }
-		let tmpViewHash = `PRSP-FilterType-${pClause.Type}`;
+		// A clause may render as a different type than it compiles as: `FilterRenderType` picks the
+		// filter VIEW while `Type` still drives pict's Filter.js compile. Boolean columns use this —
+		// they compile as an exact NumericMatch (EQ 0/1) but render the Yes/No BooleanMatch control.
+		const tmpRenderType = pClause.FilterRenderType || pClause.Type;
+		let tmpViewHash = `PRSP-FilterType-${tmpRenderType}`;
 		const tmpCustomViewHash = `${tmpViewHash}-${pClause.CustomFilterViewHash}`;
 		if (tmpCustomViewHash in this.pict.views)
 		{
@@ -92,7 +96,7 @@ class PictTemplateFilterInstanceViewInstruction extends libPictTemplate
 		let tmpView = this.pict.views[tmpViewHash];
 		if (!tmpView)
 		{
-			const tmpViewPrototype = libFilterViews[pClause.Type] || libFilterViews.Base;
+			const tmpViewPrototype = libFilterViews[tmpRenderType] || libFilterViews.Base;
 			if (!tmpViewPrototype)
 			{
 				this.pict.log.error(`Pict: Filter Instance Views Template Render: No view prototype found for filter type [${pClause.Type}]`);

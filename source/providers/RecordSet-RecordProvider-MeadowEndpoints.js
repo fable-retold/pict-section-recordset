@@ -833,7 +833,13 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 						tmpRangeClause.MaximumLabel = `Maximum ${tmpFieldHumanName}`;
 						tmpFieldFilterClauses.push(tmpRangeClause);
 						break;
-					case 'boolean': //TODO: we didn't add filters for this - they are just numeric but it's weird for the user, maybe we should add views for this that account for the difference
+					case 'boolean':
+						// A boolean is stored 0/1 — offer ONE Yes/No control, not the Exact/Partial/In-Range
+						// set that made booleans confusing to filter. It COMPILES as an exact NumericMatch
+						// (EQ 0/1), so no new pict Filter.js type is needed; `FilterRenderType` routes it to
+						// the Yes/No <select> view (RecordSet-Filter-BooleanMatch).
+						tmpFieldFilterClauses.push({ FilterKey: pSchemaField, ClauseKey: `${pSchemaField}_Boolean`, Label: `${tmpFieldHumanName}`, DisplayName: `Yes / No`, Type: 'NumericMatch', FilterRenderType: 'BooleanMatch', FilterByColumn: pSchemaField, ExactMatch: true, Ordinal: tmpFieldFilterClauses.length + 1 });
+						break;
 					case 'deleted':
 					case 'integer':
 					case 'decimal':

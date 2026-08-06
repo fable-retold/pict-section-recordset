@@ -938,7 +938,10 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		{
 			/** @type {Array<string>} */
 			const searchFields = tmpProviderConfiguration?.SearchFields ?? [ 'Name' ];
-			filterExpr = searchFields.map((filterField) => `FBVOR~${filterField}~LK~${encodeURIComponent(`%${pFilterString}%`)}`).join('~');
+			// The first stanza MUST anchor with FBV (AND); only the rest are FBVOR. A chain that is
+			// *all* FBVOR has no anchoring clause, so FoxHound leaves the OR group unconstrained and
+			// every row matches — which silently broke multi-field search (single-field masked it).
+			filterExpr = searchFields.map((filterField, filterIndex) => `${filterIndex === 0 ? 'FBV' : 'FBVOR'}~${filterField}~LK~${encodeURIComponent(`%${pFilterString}%`)}`).join('~');
 		}
 		let tmpURLTemplate = tmpProviderConfiguration[`RecordSetFilterURLTemplate-${pViewContext}`] || tmpProviderConfiguration[`RecordSetFilterURLTemplate-Default`];
 		if (!tmpURLTemplate)
