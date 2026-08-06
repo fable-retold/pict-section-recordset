@@ -357,6 +357,12 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 				{
 					providerConfiguration.FieldFilterClauses = pRecordSetConfiguration.RecordSetFieldFilterClauses;
 				}
+				// A pre-supplied schema (e.g. bundled into an app manifest) lets the provider skip
+				// the per-entity /Schema fetch at initialization. Absent, the provider fetches as before.
+				if (`RecordSetSchema` in pRecordSetConfiguration)
+				{
+					providerConfiguration.ProvidedSchema = pRecordSetConfiguration.RecordSetSchema;
+				}
 
 				tmpProvider = this.recordSetProviders[pRecordSetConfiguration.RecordSet] = this.fable.addProvider(providerConfiguration.Hash, providerConfiguration, ProviderMeadowEndpoints);
 				break;
