@@ -9,6 +9,7 @@ const viewRecordListHeader = require('./RecordSet-List-RecordListHeader.js');
 const viewRecordListEntry = require('./RecordSet-List-RecordListEntry.js');
 const viewPaginationBottom = require('./RecordSet-List-PaginationBottom.js');
 const viewColumnChooser = require('./RecordSet-List-ColumnChooser.js');
+const libSort = require('./RecordSet-List-Sort.js');
 
 /** @type {Record<string, any>} */
 const _DEFAULT_CONFIGURATION__List = (
@@ -231,6 +232,63 @@ class viewRecordSetList extends libPictRecordSetRecordView
 	onBeforeRenderList(pRecordListData)
 	{
 		return pRecordListData;
+	}
+
+	// OPT-IN sortable column headers. Stamp each header cell with whether it is sortable + the active sort, so the
+	// header template can render a clickable header + a direction indicator. Off unless the record set opts in
+	// with RecordSetListSortable:true or a column sets Sortable:true (see RecordSet-List-Sort.js). The single-
+	// element-array slots drive the header template's conditional branches (the pict {~TS:~} pattern). Idempotent.
+	_stampSortState(pRecordListData)
+	{
+		if (!pRecordListData || !Array.isArray(pRecordListData.TableCells))
+		{
+			return pRecordListData;
+		}
+		const tmpConfiguration = pRecordListData.RecordSetConfiguration || {};
+		const tmpCurrentSort = libSort.parseSort(pRecordListData.FilterString);
+		for (let i = 0; i < pRecordListData.TableCells.length; i++)
+		{
+			const tmpCell = pRecordListData.TableCells[i];
+			const tmpSortable = libSort.columnIsSortable(tmpConfiguration, tmpCell);
+			tmpCell.Sortable = tmpSortable;
+			tmpCell.RecordSet = pRecordListData.RecordSet;
+			const tmpActive = !!(tmpSortable && tmpCurrentSort && tmpCurrentSort.Field === tmpCell.Key);
+			tmpCell.SortAscending = tmpActive && (tmpCurrentSort.Direction === 'ASC');
+			tmpCell.SortDescending = tmpActive && (tmpCurrentSort.Direction === 'DESC');
+			tmpCell.SortableSlot = tmpSortable ? [ tmpCell ] : [];
+			tmpCell.PlainSlot = tmpSortable ? [] : [ tmpCell ];
+			tmpCell.AscendingSlot = tmpCell.SortAscending ? [ 1 ] : [];
+			tmpCell.DescendingSlot = tmpCell.SortDescending ? [ 1 ] : [];
+		}
+		return pRecordListData;
+	}
+
+	// A sortable header was clicked: cycle its sort (unsorted -> ASC -> DESC -> unsorted), rewrite the list's
+	// FoxHound filter string (preserving any active filter clause), and re-navigate the list route from page 0.
+	// The sort rides the FSF stanza through the normal fetch, so any provider that honors FoxHound sorting works.
+	sortByColumn(pRecordSet, pColumnKey)
+	{
+		const tmpArguments = (this._lastListRenderArgs && this._lastListRenderArgs.Args) || [];
+		const tmpFromManifest = !!(this._lastListRenderArgs && this._lastListRenderArgs.Method === 'renderListFromManifest');
+		// renderList Args: [config, providerHash, filterString, filterExperience, offset, pageSize].
+		// renderListFromManifest Args: [manifest, config, providerHash, filterString, filterExperience, offset, pageSize].
+		const tmpFilterString = tmpFromManifest ? tmpArguments[3] : tmpArguments[2];
+		const tmpFilterExperience = tmpFromManifest ? tmpArguments[4] : tmpArguments[3];
+		const tmpPageSize = (tmpFromManifest ? tmpArguments[6] : tmpArguments[5]) || 100;
+		const tmpNextSort = libSort.toggleSort(libSort.parseSort(tmpFilterString), pColumnKey);
+		const tmpNewFilterString = libSort.applySort(tmpFilterString, tmpNextSort);
+		let tmpRoute = `/PSRS/${ pRecordSet }/List`;
+		if (tmpNewFilterString)
+		{
+			tmpRoute += `/FilteredTo/${ encodeURIComponent(tmpNewFilterString) }`;
+		}
+		tmpRoute += `/0/${ tmpPageSize }`;
+		if (tmpFilterExperience)
+		{
+			tmpRoute += `/FilterExperience/${ encodeURIComponent(tmpFilterExperience) }`;
+		}
+		this.fable.providers.RecordSetRouter.pictRouter.navigate(tmpRoute);
+		return false;
 	}
 
 	/**
@@ -1058,6 +1116,8 @@ class viewRecordSetList extends libPictRecordSetRecordView
 	 */
 	_paintRecordList(pRecordListData, pBodyOnly)
 	{
+		// Stamp the opt-in sort state onto the header cells before the header repaints (no-op unless sorting is on).
+		this._stampSortState(pRecordListData);
 		const fLogRendered = function (pError)
 		{
 			if (pError)

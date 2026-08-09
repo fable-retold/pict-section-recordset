@@ -40,14 +40,36 @@ const _DEFAULT_CONFIGURATION_List_RecordListHeader = (
 	`
 				},
 				{
+					// Per-column header dispatch: a sortable column (opt in via RecordSetListSortable / column
+					// Sortable) renders a clickable, indicator-bearing header; otherwise the plain header. Exactly
+					// one slot is populated per cell in RecordSet-List._stampSortState, so this stays a no-op change
+					// for every list that has not opted into sorting.
 					Hash: 'PRSP-List-RecordListHeader-Template-Header',
+					Template: /*html*/`{~TS:PRSP-List-RecordListHeader-Header-Sortable:Record.SortableSlot~}{~TS:PRSP-List-RecordListHeader-Header-Plain:Record.PlainSlot~}`
+				},
+				{
+					Hash: 'PRSP-List-RecordListHeader-Header-Plain',
 					Template: /*html*/`
-	<!-- DefaultPackage pict view template: [PRSP-List-RecordListHeader-Template-Header] -->
 	<th style="border-bottom: 1px solid var(--theme-color-border-default, #ccc); padding: 5px; background-color: var(--theme-color-background-tertiary, #f2f2f2); color: var(--theme-color-text-primary, #333);">
 		{~D:Record.DisplayName~}
 	</th>
-	<!-- DefaultPackage end view template:  [PRSP-List-RecordListHeader-Template-Header] -->
 	`
+				},
+				{
+					Hash: 'PRSP-List-RecordListHeader-Header-Sortable',
+					Template: /*html*/`
+	<th style="border-bottom: 1px solid var(--theme-color-border-default, #ccc); padding: 5px; background-color: var(--theme-color-background-tertiary, #f2f2f2); color: var(--theme-color-text-primary, #333); cursor: pointer; user-select: none; white-space: nowrap;" title="Sort by {~D:Record.DisplayName~}" onclick="_Pict.views['RSP-RecordSet-List'].sortByColumn('{~D:Record.RecordSet~}', '{~D:Record.Key~}')">
+		{~D:Record.DisplayName~}{~TS:PRSP-List-RecordListHeader-Header-ChevronUp:Record.AscendingSlot~}{~TS:PRSP-List-RecordListHeader-Header-ChevronDown:Record.DescendingSlot~}
+	</th>
+	`
+				},
+				{
+					Hash: 'PRSP-List-RecordListHeader-Header-ChevronUp',
+					Template: /*html*/`<span style="margin-left: 4px; opacity: 0.85;">{~I:ChevronUp~}</span>`
+				},
+				{
+					Hash: 'PRSP-List-RecordListHeader-Header-ChevronDown',
+					Template: /*html*/`<span style="margin-left: 4px; opacity: 0.85;">{~I:ChevronDown~}</span>`
 				},
 				{
 					Hash: 'PRSP-List-RecordListHeader-Template-Extra-Header',
@@ -96,4 +118,3 @@ class viewRecordSetListRecordListHeader extends libPictView
 module.exports = viewRecordSetListRecordListHeader;
 
 module.exports.default_configuration = _DEFAULT_CONFIGURATION_List_RecordListHeader;
-
