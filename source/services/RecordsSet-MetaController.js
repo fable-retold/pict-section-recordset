@@ -25,7 +25,15 @@ const ProviderRouter = require('../providers/RecordSet-Router.js');
 /** @type {Record<string, any>} */
 const _DEFAULT_CONFIGURATION =
 	{
-		DefaultMeadowURLPrefix: '/1.0/'
+		DefaultMeadowURLPrefix: '/1.0/',
+		// Field-decoration policy for the entity pickers this module builds (the association editors, the
+		// entity quick-filters, and the bulk-delete replacement picker). Opt-in: a decorated picker grows a
+		// ⚙ that lets a user pin an extra record column (e.g. VendorCode) onto each dropdown row, to tell
+		// same-named records apart. `Global` decorates every entity; `Entities` keys it per entity (a value
+		// of true / false, or an object { IgnoreFields:[…] }); `IgnoreFields` hides business-noise columns on
+		// every decorated picker. Resolved per entity by resolveFieldDecoration(); the app overrides the
+		// whole object via fable.settings.FieldDecoration.
+		FieldDecoration: { Global: false, Entities: {}, IgnoreFields: [] }
 	};
 
 const libFormsTemplateProvider = require('pict-section-form').PictFormTemplateProvider;
@@ -701,6 +709,13 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 			this.manifests[tmpManifest.Scope] = tmpManifest.Form ? tmpManifest : this.pict.newManyfest(tmpManifest);
 		}
 
+		// App-level field-decoration policy overlays the module default (see _DEFAULT_CONFIGURATION /
+		// resolveFieldDecoration). One object drives the whole fleet of entity pickers this module builds.
+		if (this.fable.settings.hasOwnProperty('FieldDecoration') && typeof this.fable.settings.FieldDecoration === 'object')
+		{
+			this.options.FieldDecoration = Object.assign({}, this.options.FieldDecoration, this.fable.settings.FieldDecoration);
+		}
+
 		this.has_initialized = true;
 
 		// Load pict-router if it isn't loaded
@@ -716,6 +731,82 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 	getManifest(pScope)
 	{
 		return this.manifests[pScope];
+	}
+
+	/**
+	 * Resolve the field-decoration policy for one entity into the two flags the picker widget consumes.
+	 *
+	 * Policy shape (this.options.FieldDecoration, overridable via fable.settings.FieldDecoration):
+	 *   {
+	 *     Global: false,                                  // decorate every entity picker
+	 *     Entities: { Organization: true, Contract: { IgnoreFields: [ 'IDVendor' ] }, Foo: false },
+	 *     IgnoreFields: [ 'IDCustomer' ]                  // hidden on every decorated picker (business noise)
+	 *   }
+	 * An entity value of `true` opts it in, `false` opts it out (even when Global is on), and an object opts
+	 * it in and contributes its own IgnoreFields. The picker widget already hides the audit / value / text
+	 * columns itself; here we add the policy's IgnoreFields, the entity's IgnoreFields, and GUID<Entity>
+	 * (the picker does not auto-hide the GUID column).
+	 *
+	 * @param {string} pEntity - The entity the picker searches (e.g. 'Organization').
+	 * @return {{ Enabled: boolean, IgnoreFields: Array<string> }}
+	 */
+	resolveFieldDecoration(pEntity)
+	{
+		const tmpPolicy = (this.options && typeof this.options.FieldDecoration === 'object' && this.options.FieldDecoration) || {};
+		let tmpEnabled = (tmpPolicy.Global === true);
+		let tmpEntityIgnore = [];
+		const tmpEntityPolicy = (tmpPolicy.Entities && pEntity) ? tmpPolicy.Entities[pEntity] : undefined;
+		if (tmpEntityPolicy === true)
+		{
+			tmpEnabled = true;
+		}
+		else if (tmpEntityPolicy === false)
+		{
+			tmpEnabled = false;
+		}
+		else if (tmpEntityPolicy && typeof tmpEntityPolicy === 'object')
+		{
+			tmpEnabled = (tmpEntityPolicy.Enabled !== false);
+			if (Array.isArray(tmpEntityPolicy.IgnoreFields))
+			{
+				tmpEntityIgnore = tmpEntityPolicy.IgnoreFields;
+			}
+		}
+		if (!tmpEnabled)
+		{
+			return { Enabled: false, IgnoreFields: [] };
+		}
+		const tmpIgnoreFields = [].concat(
+			Array.isArray(tmpPolicy.IgnoreFields) ? tmpPolicy.IgnoreFields : [],
+			tmpEntityIgnore);
+		if (pEntity)
+		{
+			tmpIgnoreFields.push(`GUID${pEntity}`);
+		}
+		return { Enabled: true, IgnoreFields: tmpIgnoreFields };
+	}
+
+	/**
+	 * Stamp the resolved field-decoration flags onto a picker config, in place. The single call every
+	 * picker-creation site in this module uses so the policy is applied identically everywhere.
+	 *
+	 * @param {Record<string, any>} pConfig - A picker config (createPicker / createEntityPicker).
+	 * @param {string} pEntity - The entity the picker searches.
+	 * @return {Record<string, any>} The same config, decorated when the entity is opted in.
+	 */
+	applyFieldDecoration(pConfig, pEntity)
+	{
+		if (!pConfig)
+		{
+			return pConfig;
+		}
+		const tmpDecoration = this.resolveFieldDecoration(pEntity);
+		if (tmpDecoration.Enabled)
+		{
+			pConfig.AllowFieldDecoration = true;
+			pConfig.DecorationIgnoreFields = tmpDecoration.IgnoreFields;
+		}
+		return pConfig;
 	}
 
 	/**

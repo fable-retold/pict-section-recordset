@@ -715,7 +715,7 @@ class ViewRecordSetSUBSETFilters extends libPictView
 				return (Array.isArray(tmpVals) && tmpVals.length > 0) ? `FBL~${tmpScopeColumn}~INN~${tmpVals.join(',')}` : '';
 			};
 		}
-		const tmpView = tmpPickerProvider.createEntityPicker(`Quick-Picker-${pRecordSet}-${pMount.Field}`,
+		const tmpPickerConfig =
 		{
 			DestinationAddress: `#${pMount.HostID}`,
 			// Quick filters stay single-select for a fast pick (the full drawer entity filter can be multi).
@@ -734,7 +734,15 @@ class ViewRecordSetSUBSETFilters extends libPictView
 			ClearLabel: 'Any',
 			OnChange: (pValue) => this.applyQuickFilterEntity(pRecordSet, pViewContext, pMount.Field, pMount.ClauseKey, pValue),
 			BaseFilter: tmpScopeBaseFilter,
-		});
+		};
+		// Field decoration (module policy): when this entity is opted in, the picker offers a ⚙ to pin an
+		// extra column onto each row to tell same-named records apart. Resolved per entity by the
+		// metacontroller; GUID / audit / value / text columns are hidden.
+		if (this.pict.PictSectionRecordSet)
+		{
+			this.pict.PictSectionRecordSet.applyFieldDecoration(tmpPickerConfig, tmpDescriptor.RemoteTable);
+		}
+		const tmpView = tmpPickerProvider.createEntityPicker(`Quick-Picker-${pRecordSet}-${pMount.Field}`, tmpPickerConfig);
 		if (!tmpView) { return; }
 		tmpView.render();
 		const tmpCurrent = (typeof tmpProvider.getQuickFilterEntityValue === 'function') ? tmpProvider.getQuickFilterEntityValue(pMount.Field) : [];

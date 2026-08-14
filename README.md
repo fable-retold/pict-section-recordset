@@ -92,6 +92,28 @@ First-class, opt-in UI for managing many-to-many **joins** (the `XxxYyyJoin` con
 
 Define each join **once**, symmetrically, in a top-level `Associations` registry; then opt in per record set via a `RecordSetReadTabs` entry of `"Type": "Association"` (with `"ReadLayout": "Tab"` or `"Split"`) and/or a `RecordSetBulkAssociations` entry. With `Split`, the record stays in a resizable left pane and the association tabs sit top-right, opening to the record alone until you pick a tab. The picker comes from [pict-section-picker](https://github.com/fable-retold/pict-section-picker) and remove-confirmation from [pict-section-modal](https://github.com/fable-retold/pict-section-modal) (both soft dependencies, reached by provider hash). See the bookstore example for the full wiring (`Book`↔`Author` tabs both sides; `Book`↔`BookStore` catalog tabs + the "Assign Books to Store" bulk screen + the "Bulk Link" matrix screen), and `CLAUDE-pict-section-recordset.md` for the config reference and the `RecordSetAssociationManager` API.
 
+## Field Decoration (picker row disambiguation)
+
+The entity pickers this module builds — the **Association Editor** add-control, the **entity quick-filters**, and the **Bulk Delete** replacement picker — can grow a small **⚙** that lets a *user* pin an extra record column onto every dropdown row, as a badge. When a search returns six firms all named "Volkert", pinning `VendorCode` turns the six identical rows into `Volkert · 310009258`, `Volkert · 310009999`, … The choice is the user's, remembered in `localStorage` (keyed by entity), and unobtrusive — the ⚙ only appears where you opt the entity in. The rendering lives in [pict-section-picker](https://github.com/fable-retold/pict-section-picker)'s `AllowFieldDecoration`; this module owns the **policy** of where it's offered.
+
+**Opt-in, module-wide.** One `FieldDecoration` policy on the app settings drives every entity picker the module makes:
+
+```javascript
+"FieldDecoration":
+{
+    "Global": false,                                   // decorate every entity picker
+    "Entities":
+    {
+        "Organization": true,                          // opt one entity in
+        "Contract": { "IgnoreFields": [ "IDVendor" ] },// opt in + hide extra columns from the ⚙ chooser
+        "Invoice": false                               // opt out (even when Global is true)
+    },
+    "IgnoreFields": [ "IDCustomer" ]                   // hidden on every decorated picker (business noise)
+}
+```
+
+An entity value of `true` opts it in, `false` opts it out, and an object opts it in and contributes its own `IgnoreFields`. The picker widget already hides the value / text / audit columns on its own; the policy adds its `IgnoreFields`, the entity's `IgnoreFields`, and `GUID<Entity>` (the one system column the picker does not auto-hide). Resolved per entity by `PictSectionRecordSet.resolveFieldDecoration(pEntity)` → `{ Enabled, IgnoreFields }`, and stamped onto each picker config by `applyFieldDecoration(pConfig, pEntity)`. A caller passing explicit `AllowFieldDecoration` in a picker override still wins over the policy.
+
 ## Related Packages
 
 - [pict](https://github.com/fable-retold/pict) - MVC application framework

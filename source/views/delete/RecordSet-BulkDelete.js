@@ -673,6 +673,12 @@ class viewRecordSetBulkDelete extends libPictView
 			BaseFilter: () => `FBL~${tmpIDField}~NIN~${(pExcludeIDs || []).map((pValue) => encodeURIComponent(pValue)).join(',')}`,
 			OnChange: (pValue) => { this._replacement[String(pRecordID)] = pValue; this.updateStats(); },
 		};
+		// Field decoration (module policy): opt-in ⚙ to pin an extra column onto each replacement row so
+		// same-named candidates are distinguishable. Resolved per entity by the metacontroller.
+		if (this.pict.PictSectionRecordSet)
+		{
+			this.pict.PictSectionRecordSet.applyFieldDecoration(tmpConfig, this.provider.options.Entity);
+		}
 		tmpPickerProvider.createEntityPicker(tmpPickerHash, tmpConfig);
 		// createEntityPicker builds the picker view but does not paint it into the host — render it, then
 		// restore any prior choice (a fresh row has none, so setValue is conditional).

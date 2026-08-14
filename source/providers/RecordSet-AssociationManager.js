@@ -840,6 +840,13 @@ class PictRecordSetAssociationManager extends libPictProvider
 				return (Array.isArray(tmpIDs) && tmpIDs.length > 0) ? `FBL~${pSide.IDField}~NIN~${this._encodeList(tmpIDs)}` : '';
 			};
 		}
+		// Field decoration (module policy, resolved per entity by the metacontroller): when this side's
+		// entity is opted in, the picker offers a ⚙ to pin an extra column onto each row (the "six
+		// Volkerts" disambiguation). Caller overrides still win in the Object.assign below.
+		if (this.pict.PictSectionRecordSet)
+		{
+			this.pict.PictSectionRecordSet.applyFieldDecoration(tmpConfig, pSide.Entity);
+		}
 		return Object.assign(tmpConfig, pOverrides || {});
 	}
 
