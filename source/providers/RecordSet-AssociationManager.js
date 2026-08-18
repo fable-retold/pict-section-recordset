@@ -102,6 +102,12 @@ class PictRecordSetAssociationManager extends libPictProvider
 			// Extra fields rendered as disambiguation chips in the picker (and the editor list), e.g.
 			// ['ISBN'] or [{ Field: 'PublicationYear', Label: 'Year' }]. Passed to the picker as EntityTags.
 			ChipFields: Array.isArray(tmpSide.ChipFields) ? tmpSide.ChipFields : [],
+			// Pin-to-top: value-ids (or a `(context) => ids | Promise<ids>` resolver) for THIS side's records
+			// to float to the top of the add-picker's first browse page. Forwarded to the picker as
+			// PriorityValues; a function form receives the anchor context (which record is being associated to)
+			// so a host can pin a runtime-derived record — e.g. an Organization side pinning the anchor line
+			// item's project Prime Contractor. Only meaningful on the OTHER (picked) side.
+			PriorityValues: tmpSide.PriorityValues || false,
 			// Columns for the matrix screen's record table — for picking complex records by several fields.
 			TableColumns: this._normalizeColumns(tmpSide.TableColumns, tmpDisplayField),
 		};
@@ -814,9 +820,11 @@ class PictRecordSetAssociationManager extends libPictProvider
 	 * @param {Record<string, any>} pSide - A normalized side.
 	 * @param {(() => Array<any>)|false} pGetExcludedIDsFn - Returns ids to exclude (NIN), or falsy for none.
 	 * @param {Record<string, any>} [pOverrides] - Extra picker options (DestinationAddress, ValueAddress, Mode, OnChange, …).
+	 * @param {Record<string, any>} [pPriorityContext] - Anchor context merged into a function-form PriorityValues
+	 *   resolver's argument (e.g. `{ ThisID, ThisRecordSet }`), so a host pin can be derived from the anchor record.
 	 * @return {Record<string, any>}
 	 */
-	_pickerConfigForSide(pSide, pGetExcludedIDsFn, pOverrides)
+	_pickerConfigForSide(pSide, pGetExcludedIDsFn, pOverrides, pPriorityContext)
 	{
 		const tmpConfig = {
 			Entity: pSide.Entity,
@@ -831,6 +839,15 @@ class PictRecordSetAssociationManager extends libPictProvider
 		{
 			tmpConfig.EntityTags = pSide.ChipFields;
 			tmpConfig.TagLast = true;
+		}
+		// Pin-to-top (module policy): forward the side's PriorityValues to the picker's DataProvider. A
+		// function form is wrapped so the host resolver receives the anchor context (which record we're
+		// associating to) — the prime-contractor-at-top case needs the anchor to resolve its project.
+		if (pSide.PriorityValues)
+		{
+			tmpConfig.PriorityValues = (typeof pSide.PriorityValues === 'function')
+				? (() => pSide.PriorityValues(Object.assign({ side: pSide, manager: this, pict: this.pict }, pPriorityContext || {})))
+				: pSide.PriorityValues;
 		}
 		if (typeof pGetExcludedIDsFn === 'function')
 		{
@@ -858,16 +875,21 @@ class PictRecordSetAssociationManager extends libPictProvider
 	 * @param {string} pThisRecordSetName
 	 * @param {(() => Array<any>)|false} pGetExcludedIDsFn
 	 * @param {Record<string, any>} [pOverrides]
+	 * @param {Record<string, any>} [pAnchorContext] - The anchor record context (e.g. `{ ThisID, ThisRecordSet }`),
+	 *   passed to a function-form PriorityValues resolver on the other side so a pin can be derived from the anchor.
 	 * @return {Record<string, any>|false}
 	 */
-	buildOtherPickerConfig(pAssociationHash, pThisRecordSetName, pGetExcludedIDsFn, pOverrides)
+	buildOtherPickerConfig(pAssociationHash, pThisRecordSetName, pGetExcludedIDsFn, pOverrides, pAnchorContext)
 	{
 		const tmpSides = this.resolveSides(pAssociationHash, pThisRecordSetName);
 		if (!tmpSides)
 		{
 			return false;
 		}
-		return this._pickerConfigForSide(tmpSides.otherSide, pGetExcludedIDsFn, pOverrides);
+		const tmpPriorityContext = Object.assign(
+			{ association: tmpSides.association, thisSide: tmpSides.thisSide, otherSide: tmpSides.otherSide },
+			pAnchorContext || {});
+		return this._pickerConfigForSide(tmpSides.otherSide, pGetExcludedIDsFn, pOverrides, tmpPriorityContext);
 	}
 
 	/**

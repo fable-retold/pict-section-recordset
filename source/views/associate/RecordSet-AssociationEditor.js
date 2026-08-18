@@ -342,7 +342,10 @@ class viewRecordSetAssociationEditor extends libPictView
 				// No add-on-select: a single-select pick just stages the value and moves focus to the Add
 				// button (so Enter commits). Multi mode stages chips; the Add button commits them.
 				OnChange: tmpMulti ? undefined : (() => this._focusAddButton()),
-			});
+			},
+			// Anchor context for a function-form PriorityValues resolver on the other side — lets a pin be
+			// derived from the record we're associating to (e.g. a line item's project prime contractor).
+			{ ThisID: this.options.ThisID, ThisRecordSet: this.options.ThisRecordSet });
 		if (!tmpConfig)
 		{
 			return;

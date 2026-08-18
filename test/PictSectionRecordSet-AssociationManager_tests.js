@@ -160,6 +160,34 @@ suite
 					// No ChipFields -> no EntityTags.
 					Expect(_Manager.buildAnchorPickerConfig('Chips', 'Author').EntityTags).to.equal(undefined);
 				});
+
+				test('PriorityValues ride through, and a function form receives the anchor context', () =>
+				{
+					let tmpSeenContext = null;
+					_Manager.addAssociation('Pinned',
+						{
+							JoinEntity: 'BookAuthorJoin',
+							SideA: { RecordSet: 'Book',   IDField: 'IDBook' },
+							SideB: { RecordSet: 'Author', IDField: 'IDAuthor',
+								PriorityValues: (pContext) => { tmpSeenContext = pContext; return [ 42 ]; } },
+						});
+					// From the Book side, the OTHER side is Author — so its PriorityValues drive the picker.
+					const tmpConfig = _Manager.buildOtherPickerConfig('Pinned', 'Book', () => [], {}, { ThisID: 99, ThisRecordSet: 'Book' });
+					Expect(typeof tmpConfig.PriorityValues).to.equal('function', 'a function side is wrapped for the picker.');
+					Expect(tmpConfig.PriorityValues()).to.deep.equal([ 42 ]);
+					Expect(tmpSeenContext.ThisID).to.equal(99, 'the anchor context reaches the resolver.');
+					Expect(tmpSeenContext.otherSide.Entity).to.equal('Author', 'the resolved sides ride along in the context.');
+					// An array form rides through unwrapped.
+					_Manager.addAssociation('PinnedStatic',
+						{
+							JoinEntity: 'BookAuthorJoin',
+							SideA: { RecordSet: 'Book',   IDField: 'IDBook' },
+							SideB: { RecordSet: 'Author', IDField: 'IDAuthor', PriorityValues: [ 1, 2 ] },
+						});
+					Expect(_Manager.buildOtherPickerConfig('PinnedStatic', 'Book', () => []).PriorityValues).to.deep.equal([ 1, 2 ]);
+					// No PriorityValues -> undefined on the picker config.
+					Expect(_Manager.buildOtherPickerConfig('BookAuthor', 'Book', () => []).PriorityValues).to.equal(undefined);
+				});
 			});
 
 		suite
