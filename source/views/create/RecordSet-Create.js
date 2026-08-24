@@ -112,6 +112,8 @@ class viewRecordSetCreate extends libPictRecordSetRecordView
 		tmpProviderConfiguration.RoutePayload = pRoutePayload;
 		tmpProviderConfiguration.RecordSet = pRoutePayload.data.RecordSet;
 
+		if (this.delegateToCustomView('Create', tmpProviderConfiguration, pRoutePayload)) { return true; }
+
 		return this.renderCreate(tmpProviderConfiguration, tmpProviderHash);
 	}
 

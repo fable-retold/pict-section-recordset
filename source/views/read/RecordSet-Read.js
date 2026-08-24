@@ -419,6 +419,8 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		tmpProviderConfiguration.RecordSet = pRoutePayload.data.RecordSet;
 		tmpProviderConfiguration.GUIDRecord = pRoutePayload.data.GUIDRecord;
 
+		if (this.delegateToCustomView(this.action, tmpProviderConfiguration, pRoutePayload)) { return true; }
+
 		return this.renderRead(tmpProviderConfiguration, tmpProviderHash, pRoutePayload.data.GUIDRecord);
 	}
 
@@ -445,6 +447,8 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		tmpProviderConfiguration.RecordSet = pRoutePayload.data.RecordSet;
 		tmpProviderConfiguration.GUIDRecord = pRoutePayload.data.GUIDRecord;
 
+		if (this.delegateToCustomView(this.action, tmpProviderConfiguration, pRoutePayload)) { return true; }
+
 		return this.renderRead(tmpProviderConfiguration, tmpProviderHash, pRoutePayload.data.GUIDRecord);
 	}
 
@@ -464,6 +468,8 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		tmpProviderConfiguration.RoutePayload = pRoutePayload;
 		tmpProviderConfiguration.RecordSet = pRoutePayload.data.RecordSet;
 		tmpProviderConfiguration.GUIDRecord = pRoutePayload.data.GUIDRecord;
+
+		if (this.delegateToCustomView(this.action, tmpProviderConfiguration, pRoutePayload)) { return true; }
 
 		return this.renderRead(tmpProviderConfiguration, tmpProviderHash, pRoutePayload.data.GUIDRecord);
 	}

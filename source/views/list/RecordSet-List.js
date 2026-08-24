@@ -156,6 +156,8 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		const tmpProviderConfiguration = this.pict.PictSectionRecordSet.recordSetProviderConfigurations[pRoutePayload.data.RecordSet];
 		const tmpProviderHash = `RSP-Provider-${pRoutePayload.data.RecordSet}`;
 
+		if (this.delegateToCustomView('List', tmpProviderConfiguration, pRoutePayload)) { return true; }
+
 		const tmpFilterString = pRoutePayload.data.FilterString || '';
 		const tmpFilterExperience = pRoutePayload.data.FilterExperience || '';
 

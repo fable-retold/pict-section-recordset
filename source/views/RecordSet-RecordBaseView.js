@@ -80,6 +80,54 @@ class viewPictSectionRecordSetViewBase extends libPictView
 		this.pict.log.trace(`View [${this.options.ViewIdentifier}]::[${this.Hash}] addRoutes called.`);
 		return true;
 	}
+
+	/**
+	 * Custom-view override hook. A record set can replace the built-in List / View / Edit / Create
+	 * screen with an entirely custom pict view by setting `RecordSetConfiguration.RecordSetCustomViews`,
+	 * e.g. `{ View: 'MyViewHash', Edit: 'MyViewHash', Create: 'MyViewHash', List: 'MyViewHash' }`.
+	 *
+	 * When a route for `pAction` fires and a custom view is configured (and registered), the route
+	 * context is stashed at `AppData.PictRecordSetCustomView` = `{ Action, RecordSet, GUIDRecord }` and
+	 * the custom view is driven: its `onRecordSetCustomView(context)` is called if present, else it is
+	 * `render()`ed. Returns true when it handled the route (the caller must then return without
+	 * rendering the generic screen); false to fall through to the built-in rendering.
+	 *
+	 * @param {string} pAction - 'List' | 'View' | 'Edit' | 'Create'
+	 * @param {Record<string, any>} pProviderConfiguration
+	 * @param {Record<string, any>} [pRoutePayload]
+	 * @return {boolean}
+	 */
+	delegateToCustomView(pAction, pProviderConfiguration, pRoutePayload)
+	{
+		const tmpCustomViews = pProviderConfiguration && pProviderConfiguration.RecordSetCustomViews;
+		const tmpViewHash = tmpCustomViews && tmpCustomViews[pAction];
+		if (!tmpViewHash || !this.pict.views[tmpViewHash])
+		{
+			if (tmpViewHash && !this.pict.views[tmpViewHash])
+			{
+				this.pict.log.warn(`RecordSet [${pProviderConfiguration && pProviderConfiguration.RecordSet}] configures a custom ${pAction} view [${tmpViewHash}] but no such view is registered; falling back to the built-in screen.`);
+			}
+			return false;
+		}
+		const tmpContext =
+		{
+			Action: pAction,
+			RecordSet: (pRoutePayload && pRoutePayload.data && pRoutePayload.data.RecordSet) || (pProviderConfiguration && pProviderConfiguration.RecordSet) || '',
+			GUIDRecord: (pRoutePayload && pRoutePayload.data && pRoutePayload.data.GUIDRecord) || '',
+			RoutePayload: pRoutePayload || null,
+		};
+		this.pict.AppData.PictRecordSetCustomView = tmpContext;
+		const tmpView = this.pict.views[tmpViewHash];
+		if (typeof tmpView.onRecordSetCustomView === 'function')
+		{
+			tmpView.onRecordSetCustomView(tmpContext);
+		}
+		else
+		{
+			tmpView.render();
+		}
+		return true;
+	}
 }
 
 module.exports = viewPictSectionRecordSetViewBase;
