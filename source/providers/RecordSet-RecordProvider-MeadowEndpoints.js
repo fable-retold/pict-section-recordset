@@ -43,6 +43,14 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 		//TODO: make this typedef better
 		/** @type {Record<string, any>} */
 		this._Schema;
+		/**
+		 * Single-flight handle for the deferred `<Entity>/Schema` load, so the
+		 * background load kicked off at initialization and any on-demand
+		 * `getRecordSchema()` share one network round-trip (and one filter-schema
+		 * build). Null when idle / not yet loaded.
+		 * @type {Promise<Record<string, any> | null> | null}
+		 */
+		this._SchemaInitPromise = null;
 		/** @type {Record<string, Record<string, any>>} */
 		this._Experiences = { };
 		/** @type {Record<string, Record<string, any>>} */
@@ -944,15 +952,27 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 					}
 				}
 			}
-			this.initializeEntitySchema(() =>
+			if (pError)
 			{
-				if (pError)
-				{
-					return fCallback(pError);
-				}
-				this.initializeFilterSchema();
-				return fCallback();
+				return fCallback(pError);
+			}
+			// Defer the per-entity `<Entity>/Schema` fetch — do NOT block this
+			// provider's initialization callback on it. The application initializes
+			// providers through a serial queue (pict-application's Anticipate), so
+			// blocking here made an app with N record sets pay N schema round-trips
+			// back-to-back at startup (tens of seconds against a remote API). Kick
+			// the load off in the background so initialization completes immediately
+			// and the loads overlap; the List/Read/Create/Dashboard views each
+			// `await getRecordSchema()` before rendering, so the schema is always
+			// present by the time it is actually needed. `_ensureEntitySchemaAsync`
+			// is single-flight, so this background load and a later on-demand
+			// `getRecordSchema()` can never double-fetch. (When a manifest supplies
+			// `ProvidedSchema`, that path resolves synchronously with no round-trip.)
+			this._ensureEntitySchemaAsync().catch((pSchemaError) =>
+			{
+				this.fable.log.error(`Error initializing entity schema for ${this.options.Entity}: ${pSchemaError?.message || pSchemaError}`, { Stack: pSchemaError?.stack });
 			});
+			return fCallback();
 		});
 	}
 
@@ -1011,16 +1031,34 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 	}
 
 	/**
-	 * @param {(error?: Error) => void} fCallback - The callback function.
+	 * Load the entity schema (and derive the filter schema from it) exactly once,
+	 * sharing a single in-flight network round-trip across every caller.
+	 *
+	 * The `<Entity>/Schema` fetch used to run inline in `onInitializeAsync`,
+	 * blocking each provider's init callback; against the serial provider-init
+	 * queue that turned N record sets into N back-to-back round-trips at startup.
+	 * The fetch is now deferred and pulled in on demand by `getRecordSchema()`.
+	 * Caching the promise here guarantees the deferred background load and any
+	 * on-demand call never double-fetch — nor double-run the append-only
+	 * `initializeFilterSchema()`. A manifest can still hand the schema over up
+	 * front via `options.ProvidedSchema` (resolves synchronously, no round-trip).
+	 * Resolves with the schema (or null when the endpoint does not support a
+	 * Schema capability); a failed/unsupported load clears the cached handle so a
+	 * later attempt can retry.
+	 *
+	 * @return {Promise<Record<string, any> | null>} the loaded entity schema
 	 */
-	initializeEntitySchema(fCallback)
+	_ensureEntitySchemaAsync()
 	{
+		if (this._Schema)
+		{
+			return Promise.resolve(this._Schema);
+		}
 		// A caller can hand this provider its schema up front (options.ProvidedSchema) -- the app
 		// manifest bundles each entity's schema so boot skips the per-entity /Schema round trip. It
 		// is the same object the /Schema endpoint returns, so every downstream reader behaves
-		// identically. When it is absent (or a schema is already loaded) we fall through to the
-		// network fetch exactly as before, so nothing that relied on the fetch breaks.
-		if (!this._Schema && this.options.ProvidedSchema && typeof this.options.ProvidedSchema === 'object')
+		// identically. When it is absent we fall through to the (deferred) network fetch.
+		if (this.options.ProvidedSchema && typeof this.options.ProvidedSchema === 'object')
 		{
 			this._Schema = this.options.ProvidedSchema;
 			// Seed the entity provider's capability cache from the supplied schema, the same as the
@@ -1029,40 +1067,73 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 			{
 				this.entityProvider.primeEntityCapabilityFromSchema(this.options.Entity, this._Schema, this.options.URLPrefix);
 			}
-			return fCallback(null);
+			this.initializeFilterSchema();
+			return Promise.resolve(this._Schema);
 		}
-		this.fable.log.info('Initializing RecordSetProvider-MeadowEndpoints');
-		const checkSession = this.pict.services.PictSectionRecordSet ? this.pict.services.PictSectionRecordSet.checkSession.bind(this.pict.services.PictSectionRecordSet) : async () => true;
-		checkSession('Schema').then(async (supported) =>
+		if (this._SchemaInitPromise)
 		{
-			if (!supported)
+			return this._SchemaInitPromise;
+		}
+		this._SchemaInitPromise = (async () =>
+		{
+			this.fable.log.info('Initializing RecordSetProvider-MeadowEndpoints');
+			const tmpCheckSession = this.pict.services.PictSectionRecordSet ? this.pict.services.PictSectionRecordSet.checkSession.bind(this.pict.services.PictSectionRecordSet) : async () => true;
+			const tmpSupported = await tmpCheckSession('Schema');
+			if (!tmpSupported)
 			{
-				return fCallback();
+				return null;
 			}
-			this.entityProvider.restClient.getJSON(`${this.options.URLPrefix}${this.options.Entity}/Schema`, (error, response, result) =>
+			const tmpSchema = await new Promise((resolve, reject) =>
 			{
-				if (error)
+				this.entityProvider.restClient.getJSON(`${this.options.URLPrefix}${this.options.Entity}/Schema`, (pError, pResponse, pResult) =>
 				{
-					this.fable.log.error(`Error fetching schema: ${error?.message || error}`, { Stack: error?.stack });
-					this._Schema = null;
-					return fCallback(error);
-				}
-				this._Schema = result;
-				// The schema response carries the endpoint's version/capability
-				// metadata; seed the entity provider's capability cache from it so
-				// reads avoid a redundant capability probe.
-				if (this.entityProvider && typeof this.entityProvider.primeEntityCapabilityFromSchema === 'function')
-				{
-					this.entityProvider.primeEntityCapabilityFromSchema(this.options.Entity, result, this.options.URLPrefix);
-				}
-				return fCallback(null);
+					if (pError)
+					{
+						return reject(pError);
+					}
+					return resolve(pResult);
+				});
 			});
-		}).catch((error) =>
-		{
-			this._Schema = null;
-			this.fable.log.error('Error checking session for schema', error);
-			return fCallback(error);
-		});
+			this._Schema = tmpSchema;
+			// The schema response carries the endpoint's version/capability
+			// metadata; seed the entity provider's capability cache from it so
+			// reads avoid a redundant capability probe.
+			if (this.entityProvider && typeof this.entityProvider.primeEntityCapabilityFromSchema === 'function')
+			{
+				this.entityProvider.primeEntityCapabilityFromSchema(this.options.Entity, tmpSchema, this.options.URLPrefix);
+			}
+			// Derive the filter schema from the entity schema now that it is loaded.
+			// This is append-only, so the single-flight promise keeps it to one run.
+			this.initializeFilterSchema();
+			return this._Schema;
+		})()
+			.then((pSchema) =>
+			{
+				// A no-op (unsupported) load leaves `_Schema` null; drop the cached
+				// handle so a subsequent call can retry the capability probe.
+				if (!this._Schema)
+				{
+					this._SchemaInitPromise = null;
+				}
+				return pSchema;
+			})
+			.catch((pError) =>
+			{
+				this.fable.log.error(`Error fetching schema: ${pError?.message || pError}`, { Stack: pError?.stack });
+				this._Schema = null;
+				this._SchemaInitPromise = null;
+				throw pError;
+			});
+		return this._SchemaInitPromise;
+	}
+
+	/**
+	 * Backwards-compatible callback wrapper around {@link _ensureEntitySchemaAsync}.
+	 * @param {(error?: Error) => void} fCallback - The callback function.
+	 */
+	initializeEntitySchema(fCallback)
+	{
+		this._ensureEntitySchemaAsync().then(() => fCallback(null)).catch((pError) => fCallback(pError));
 	}
 
 	initializeFilterSchema()
@@ -1230,15 +1301,7 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 	{
 		if (!this._Schema)
 		{
-			await new Promise((resolve, reject) => this.initializeEntitySchema((pError) =>
-			{
-				if (pError)
-				{
-					return reject(pError);
-				}
-				this.initializeFilterSchema();
-				resolve();
-			}));
+			await this._ensureEntitySchemaAsync();
 		}
 		return this._Schema;
 	}
