@@ -139,5 +139,26 @@ suite
 			Expect(tmpSchema).to.be.an('object', 'a later read retries and succeeds');
 			Expect(counter.count).to.equal(2, 'the retry issues a fresh /Schema round-trip');
 		});
+
+		test('onInitializeAsync does NOT fetch <Entity>/Schema at init — the load is deferred to first view', async () =>
+		{
+			const { provider, counter } = buildProvider();
+			await new Promise((resolve, reject) => provider.initializeAsync((pError) => (pError ? reject(pError) : resolve())));
+			// Give any (erroneously) kicked-off background fetch a tick to land.
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			Expect(counter.count).to.equal(0, 'initialization must not fetch the schema for a record set that has not been viewed');
+			Expect(provider._Schema == null, 'no schema is loaded at init').to.equal(true);
+			// ...and it still loads lazily on the first getRecordSchema().
+			await provider.getRecordSchema();
+			Expect(counter.count).to.equal(1, 'the schema is fetched on first demand');
+		});
+
+		test('onInitializeAsync eagerly primes a manifest-provided schema with no network round-trip', async () =>
+		{
+			const { provider, counter } = buildProvider({ ProvidedSchema: SCHEMA });
+			await new Promise((resolve, reject) => provider.initializeAsync((pError) => (pError ? reject(pError) : resolve())));
+			Expect(provider._Schema).to.equal(SCHEMA, 'the manifest-provided schema is primed at init');
+			Expect(counter.count).to.equal(0, 'a manifest-provided schema costs no /Schema round-trip');
+		});
 	}
 );

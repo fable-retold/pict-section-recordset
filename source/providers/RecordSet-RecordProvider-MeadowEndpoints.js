@@ -956,22 +956,23 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 			{
 				return fCallback(pError);
 			}
-			// Defer the per-entity `<Entity>/Schema` fetch — do NOT block this
-			// provider's initialization callback on it. The application initializes
-			// providers through a serial queue (pict-application's Anticipate), so
-			// blocking here made an app with N record sets pay N schema round-trips
-			// back-to-back at startup (tens of seconds against a remote API). Kick
-			// the load off in the background so initialization completes immediately
-			// and the loads overlap; the List/Read/Create/Dashboard views each
-			// `await getRecordSchema()` before rendering, so the schema is always
-			// present by the time it is actually needed. `_ensureEntitySchemaAsync`
-			// is single-flight, so this background load and a later on-demand
-			// `getRecordSchema()` can never double-fetch. (When a manifest supplies
-			// `ProvidedSchema`, that path resolves synchronously with no round-trip.)
-			this._ensureEntitySchemaAsync().catch((pSchemaError) =>
+			// Do NOT fetch the per-entity `<Entity>/Schema` at initialization. The
+			// application initializes EVERY registered record-set provider (an app
+			// can register dozens), so fetching here — even non-blocking — makes boot
+			// fire one `<Entity>/Schema` round-trip per record set, whether or not
+			// that record set is ever viewed (tens of round-trips against a remote
+			// API on a landing page that shows no lists). Defer entirely: the
+			// List/Read/Create/Dashboard views each `await getRecordSchema()` before
+			// rendering, so the schema loads lazily for the record sets actually
+			// viewed. The one exception is a manifest-provided schema, which costs no
+			// round-trip — prime that eagerly so filters are ready with zero latency.
+			if (this.options.ProvidedSchema && typeof this.options.ProvidedSchema === 'object')
 			{
-				this.fable.log.error(`Error initializing entity schema for ${this.options.Entity}: ${pSchemaError?.message || pSchemaError}`, { Stack: pSchemaError?.stack });
-			});
+				this._ensureEntitySchemaAsync().catch((pSchemaError) =>
+				{
+					this.fable.log.error(`Error initializing entity schema for ${this.options.Entity}: ${pSchemaError?.message || pSchemaError}`, { Stack: pSchemaError?.stack });
+				});
+			}
 			return fCallback();
 		});
 	}
