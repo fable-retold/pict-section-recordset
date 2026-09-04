@@ -108,19 +108,52 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 		{
 			return tmpCallback(new Error('RecordSet provider cannot resolve a distinct request (missing Entity or rest client).'), []);
 		}
+		// De-duplicate CONCURRENT fetches for the same key. The cache above is only
+		// written when a response lands, so callers that re-check it while a request
+		// is still in flight all miss and each issue their own identical request.
+		// The quick-filter views remount on every render epoch and re-check exactly
+		// that way, so one filter apply fanned out into a dozen duplicate distinct
+		// queries -- the bulk of the delay between clicking Apply and seeing rows.
+		// Queue the extra callbacks against the outstanding request instead.
+		this._scopeDistinctInFlight = this._scopeDistinctInFlight || {};
+		if (Array.isArray(this._scopeDistinctInFlight[tmpCacheKey]))
+		{
+			this._scopeDistinctInFlight[tmpCacheKey].push(tmpCallback);
+			return;
+		}
+		this._scopeDistinctInFlight[tmpCacheKey] = [];
 		const tmpURL = `${this.options.URLPrefix || ''}${this.options.Entity}s/Distinct/${pColumn}${tmpOptions.Filter ? `/FilteredTo/${tmpOptions.Filter}` : ''}`;
 		const tmpEntityProvider = this.entityProvider;
+		/**
+		 * Settle this key: cache the outcome, then notify the caller that issued the
+		 * request plus everyone who asked for the same key while it was in flight.
+		 *
+		 * @param {Error|null} pSettleError
+		 * @param {Array<any>} pValues
+		 */
+		const fSettleDistinct = (pSettleError, pValues) =>
+		{
+			// A create/update/delete may have reset the cache while this was in
+			// flight; re-seat it rather than throwing on a null.
+			this._scopeDistinctCache = this._scopeDistinctCache || {};
+			this._scopeDistinctCache[tmpCacheKey] = pValues;
+			const tmpWaiting = (this._scopeDistinctInFlight || {})[tmpCacheKey] || [];
+			if (this._scopeDistinctInFlight) { delete this._scopeDistinctInFlight[tmpCacheKey]; }
+			tmpCallback(pSettleError, pValues);
+			for (let i = 0; i < tmpWaiting.length; i++)
+			{
+				tmpWaiting[i](pSettleError, pValues);
+			}
+		};
 		const fHandleDistinctResult = (pError, pResponse, pBody) =>
 		{
 			if (pError || (pResponse && pResponse.statusCode > 299) || !Array.isArray(pBody))
 			{
 				this.pict.log.warn(`RecordSet [${this.options.RecordSet || this.options.Entity}] distinct fetch for [${pColumn}] failed; the scoped filter falls back to unscoped.`, { Error: pError && pError.message, URL: tmpURL });
-				this._scopeDistinctCache[tmpCacheKey] = [];
-				return tmpCallback(pError || new Error('distinct fetch returned a non-array'), []);
+				return fSettleDistinct(pError || new Error('distinct fetch returned a non-array'), []);
 			}
 			const tmpValues = [ ...new Set(pBody.map((pRecord) => pRecord && pRecord[pColumn]).filter((pValue) => pValue != null)) ];
-			this._scopeDistinctCache[tmpCacheKey] = tmpValues;
-			return tmpCallback(null, tmpValues);
+			return fSettleDistinct(null, tmpValues);
 		};
 		// Route through POST /:Entity/Query (Distinct mode) when the endpoint
 		// supports it — a long /FilteredTo/ stanza on the Distinct GET is the same
@@ -593,6 +626,7 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 				// Mutations can introduce/retire column values; drop the distinct cache so
 				// ScopeToRecordSet scoping and DistinctSelectedValueList dropdowns refresh.
 				this._scopeDistinctCache = null;
+				this._scopeDistinctInFlight = null;
 				// Drop this list's scoped cache too, so the next render re-fetches fresh.
 				if (typeof this.pict.EntityProvider.clearScope === 'function')
 				{
@@ -630,6 +664,7 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 				// Mutations can introduce/retire column values; drop the distinct cache so
 				// ScopeToRecordSet scoping and DistinctSelectedValueList dropdowns refresh.
 				this._scopeDistinctCache = null;
+				this._scopeDistinctInFlight = null;
 				// Drop this list's scoped cache too, so the next render re-fetches fresh.
 				if (typeof this.pict.EntityProvider.clearScope === 'function')
 				{
@@ -667,6 +702,7 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 				// Mutations can introduce/retire column values; drop the distinct cache so
 				// ScopeToRecordSet scoping and DistinctSelectedValueList dropdowns refresh.
 				this._scopeDistinctCache = null;
+				this._scopeDistinctInFlight = null;
 				// Drop this list's scoped cache too, so the next render re-fetches fresh.
 				if (typeof this.pict.EntityProvider.clearScope === 'function')
 				{

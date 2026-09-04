@@ -121,6 +121,103 @@ suite
 
 				test
 				(
+					'Concurrent requests for one key issue a SINGLE fetch and all callbacks receive the values',
+					(fDone) =>
+					{
+						// The quick-filter views remount on every render epoch and re-check
+						// the cache each time. The cache is only written when a response
+						// lands, so without single-flight de-duplication every remount during
+						// an in-flight fetch misses and fires another identical request --
+						// one filter apply fanned out into 13 duplicate distinct queries.
+						let tmpPendingCallback = null;
+						_Provider._EntityProvider.restClient.getJSON = (pURL, fCallback) =>
+						{
+							_RequestedURLs.push(pURL);
+							tmpPendingCallback = () => fCallback(null, { statusCode: 200 }, _ResponseBody);
+						};
+						const tmpResults = [];
+						for (let i = 0; i < 5; i++)
+						{
+							_Provider.getRecordSetColumnDistinct('Product', (pError, pValues) => tmpResults.push({ Error: pError, Values: pValues }));
+						}
+						// All five asked before anything resolved: exactly one request.
+						Expect(_RequestedURLs.length).to.equal(1);
+						Expect(tmpResults.length).to.equal(0);
+						tmpPendingCallback();
+						Expect(tmpResults.length).to.equal(5);
+						for (const tmpResult of tmpResults)
+						{
+							Expect(tmpResult.Error).to.not.exist;
+							Expect(tmpResult.Values).to.deep.equal([ '1/4" Chip', 'Natural Sand' ]);
+						}
+						// Settled: the key is cached and no longer in flight.
+						Expect(_Provider._scopeDistinctCache.Product).to.deep.equal([ '1/4" Chip', 'Natural Sand' ]);
+						Expect((_Provider._scopeDistinctInFlight || {}).Product).to.not.exist;
+						// A later caller still resolves from cache without a new request.
+						_Provider.getRecordSetColumnDistinct('Product', (pCacheError, pCachedValues) =>
+						{
+							Expect(_RequestedURLs.length).to.equal(1);
+							Expect(pCachedValues).to.deep.equal([ '1/4" Chip', 'Natural Sand' ]);
+							fDone();
+						});
+					}
+				);
+
+				test
+				(
+					'A FAILED in-flight fetch settles every queued callback rather than stranding them',
+					(fDone) =>
+					{
+						let tmpPendingCallback = null;
+						_Provider._EntityProvider.restClient.getJSON = (pURL, fCallback) =>
+						{
+							_RequestedURLs.push(pURL);
+							tmpPendingCallback = () => fCallback(new Error('boom'), { statusCode: 500 }, null);
+						};
+						const tmpResults = [];
+						for (let i = 0; i < 3; i++)
+						{
+							_Provider.getRecordSetColumnDistinct('Product', (pError, pValues) => tmpResults.push({ Error: pError, Values: pValues }));
+						}
+						Expect(_RequestedURLs.length).to.equal(1);
+						tmpPendingCallback();
+						// Every waiter is notified — a queued callback that never fires would
+						// leave its filter control stuck on "Loading…" forever.
+						Expect(tmpResults.length).to.equal(3);
+						for (const tmpResult of tmpResults)
+						{
+							Expect(tmpResult.Error).to.exist;
+							Expect(tmpResult.Values).to.deep.equal([]);
+						}
+						Expect((_Provider._scopeDistinctInFlight || {}).Product).to.not.exist;
+						fDone();
+					}
+				);
+
+				test
+				(
+					'Concurrent requests for DIFFERENT keys are not collapsed together',
+					(fDone) =>
+					{
+						const tmpPending = [];
+						_Provider._EntityProvider.restClient.getJSON = (pURL, fCallback) =>
+						{
+							_RequestedURLs.push(pURL);
+							tmpPending.push(() => fCallback(null, { statusCode: 200 }, _ResponseBody));
+						};
+						_Provider.getRecordSetColumnDistinct('Product', () => {});
+						_Provider.getRecordSetColumnDistinct('Product', { Filter: 'FBV~Deleted~EQ~0' }, () => {});
+						// Distinct cache keys are independent fetches.
+						Expect(_RequestedURLs.length).to.equal(2);
+						tmpPending.forEach((fSettle) => fSettle());
+						Expect(_Provider._scopeDistinctCache.Product).to.deep.equal([ '1/4" Chip', 'Natural Sand' ]);
+						Expect(_Provider._scopeDistinctCache['Product::FBV~Deleted~EQ~0']).to.deep.equal([ '1/4" Chip', 'Natural Sand' ]);
+						fDone();
+					}
+				);
+
+				test
+				(
 					'Mutations clear the distinct cache (create / update / delete)',
 					async () =>
 					{
