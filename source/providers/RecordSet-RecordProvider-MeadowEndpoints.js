@@ -1163,8 +1163,25 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 			{
 				return null;
 			}
+			// Go through the entity provider's SHARED schema cache rather than
+			// fetching the URL ourselves. The capability probe reads the same
+			// `<Entity>/Schema`, and when each side had its own single-flight the
+			// identical schema was fetched twice per recordset. Requires
+			// pict >= the release that adds getEntitySchema; older builds fall
+			// back to the direct read.
 			const tmpSchema = await new Promise((resolve, reject) =>
 			{
+				if (typeof this.entityProvider.getEntitySchema === 'function')
+				{
+					return this.entityProvider.getEntitySchema(this.options.Entity, this.options.URLPrefix, (pError, pResult) =>
+					{
+						if (pError)
+						{
+							return reject(pError);
+						}
+						return resolve(pResult);
+					});
+				}
 				this.entityProvider.restClient.getJSON(`${this.options.URLPrefix}${this.options.Entity}/Schema`, (pError, pResponse, pResult) =>
 				{
 					if (pError)
