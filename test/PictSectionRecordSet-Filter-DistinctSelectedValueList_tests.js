@@ -239,6 +239,89 @@ suite
 
 		suite
 		(
+			'Connected-entity field inference',
+			() =>
+			{
+				/** @type {libPict} */
+				let _Pict;
+
+				/** Build a provider with the given options. */
+				const fBuildProvider = (pOptions) =>
+				{
+					_Pict = new libPict();
+					// eslint-disable-next-line no-unused-vars
+					const tmpEnvironment = new libPict.EnvironmentObject(_Pict);
+					_Pict.addProvider('InferProvider', Object.assign({ RecordSet: 'HmaSieve', Entity: 'C182_PD_HmaMixSieveWide', URLPrefix: '/1.0/PrivateDataLake/PD/' }, pOptions || {}), libRecordProviderMeadow);
+					return _Pict.providers.InferProvider;
+				};
+				// A denormalized lake row: its own physical PK, a genuine reference, and
+				// two source ids that are plain data rather than navigable references.
+				const _LakeRow = { IDC182_PD_HmaMixSieveWide: 1, GUIDC182_PD_HmaMixSieveWide: 'X', IDDocument: 3570044, IDProject: 30861, PctN200: '5.2' };
+
+				test
+				(
+					'Every ID column is inferred as a reference by default',
+					() =>
+					{
+						const tmpProvider = fBuildProvider();
+						const tmpFields = tmpProvider.inferConnectedEntityIDFields([ _LakeRow ], 'C182_PD_HmaMixSieveWide');
+						Expect(tmpFields).to.include('IDDocument');
+						Expect(tmpFields).to.include('IDProject');
+						Expect(tmpFields).to.include('CreatingIDUser');
+					}
+				);
+
+				test
+				(
+					'IgnoreConnectedEntityFields suppresses a denormalized id without touching real references',
+					() =>
+					{
+						const tmpProvider = fBuildProvider({ IgnoreConnectedEntityFields: [ 'IDDocument' ] });
+						const tmpFields = tmpProvider.inferConnectedEntityIDFields([ _LakeRow ], 'C182_PD_HmaMixSieveWide');
+						// The whole point: no bulk prefetch of the decorated Documents endpoint.
+						Expect(tmpFields).to.not.include('IDDocument');
+						Expect(tmpFields).to.include('IDProject');
+					}
+				);
+
+				test
+				(
+					'A lake physical primary key is never inferred as a reference',
+					() =>
+					{
+						const tmpProvider = fBuildProvider();
+						const tmpFields = tmpProvider.inferConnectedEntityIDFields([ _LakeRow ], 'SomeOtherEntity');
+						// IDC<customer>_<Table> names no entity; fetching it 404s and aborts the bind.
+						Expect(tmpFields).to.not.include('IDC182_PD_HmaMixSieveWide');
+					}
+				);
+
+				test
+				(
+					'The recordset own primary key is not treated as a reference',
+					() =>
+					{
+						const tmpProvider = fBuildProvider();
+						const tmpFields = tmpProvider.inferConnectedEntityIDFields([ { IDBook: 1, IDAuthor: 2 } ], 'Book');
+						Expect(tmpFields).to.not.include('IDBook');
+						Expect(tmpFields).to.include('IDAuthor');
+					}
+				);
+
+				test
+				(
+					'An empty page still returns the audit user references',
+					() =>
+					{
+						const tmpProvider = fBuildProvider();
+						Expect(tmpProvider.inferConnectedEntityIDFields([], 'Book')).to.deep.equal([ 'CreatingIDUser', 'UpdatingIDUser' ]);
+					}
+				);
+			}
+		);
+
+		suite
+		(
 			'Base provider quick-bar mapping',
 			() =>
 			{

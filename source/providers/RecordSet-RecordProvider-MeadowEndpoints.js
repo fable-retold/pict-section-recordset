@@ -189,6 +189,69 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 	}
 
 	/**
+	 * Columns that look like foreign keys but must NOT be prefetched as connected
+	 * entities. Configure with `IgnoreConnectedEntityFields`.
+	 *
+	 * @return {Array<string>} - The field names to skip when inferring connected entities.
+	 */
+	get ignoreConnectedEntityFields()
+	{
+		if (Array.isArray(this.options.IgnoreConnectedEntityFields))
+		{
+			return this.options.IgnoreConnectedEntityFields;
+		}
+		return [];
+	}
+
+	/**
+	 * Infer which columns are foreign keys worth prefetching as connected entities.
+	 *
+	 * Any `ID*` column other than the recordset's own primary key is treated as a
+	 * reference. That inference is right for a normalized table and wrong for a
+	 * DENORMALIZED one: a reporting/lake table routinely carries a source id
+	 * (`IDDocument`, `IDProject`) as plain data, and prefetching it bulk-reads the
+	 * DECORATED entity endpoint with an INN list of every distinct value on the
+	 * page — a slow, paged fan-out that blocks the record bind and fetches records
+	 * nothing renders.
+	 *
+	 * Two exclusions:
+	 *   - `IgnoreConnectedEntityFields`, per recordset, for denormalized columns.
+	 *   - Lake physical primary keys (`IDC<customer>_<Table>`), always: they do not
+	 *     name an entity, so the read 404s and aborts the bind.
+	 *
+	 * @param {Array<Record<string, any>>} pRecords - The page of records just read.
+	 * @param {string} pEntity - The recordset's own entity name (its PK is never a reference).
+	 * @return {Array<string>} - The ID columns to hand to the connected-entity cache.
+	 */
+	inferConnectedEntityIDFields(pRecords, pEntity)
+	{
+		const tmpIDFields = [ 'CreatingIDUser', 'UpdatingIDUser' ];
+		if (!Array.isArray(pRecords) || !pRecords.length)
+		{
+			return tmpIDFields;
+		}
+		const tmpIgnored = this.ignoreConnectedEntityFields;
+		for (const tmpColumn of Object.keys(pRecords[0]))
+		{
+			if (!tmpColumn.startsWith('ID') || tmpColumn === `ID${pEntity}`)
+			{
+				continue;
+			}
+			if (tmpIgnored.indexOf(tmpColumn) > -1)
+			{
+				continue;
+			}
+			// Lake physical PK (IDC182_PD_HmaMixSieveWide) — not an entity name.
+			if (/^IDC\d+_/.test(tmpColumn))
+			{
+				continue;
+			}
+			tmpIDFields.push(tmpColumn);
+		}
+		return tmpIDFields;
+	}
+
+	/**
 	 * Get a record by its ID or GUID.
 	 *
 	 * @param {string|number} pIDOrGuid - The ID or GUID of the record.
@@ -473,17 +536,7 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 					}
 					this.fable.manifest.setValueByHash(this.pict, tmpExperience.ResultDestinationAddress, result);
 					const recordsReturn = result;
-					const IDFields = ['CreatingIDUser', 'UpdatingIDUser'];
-					if (recordsReturn.length)
-					{
-						for (const k of Object.keys(recordsReturn[0]))
-						{
-							if (k.startsWith('ID') && k !== `ID${ tmpEntity }`)
-							{
-								IDFields.push(k);
-							}
-						}
-					}
+					const IDFields = this.inferConnectedEntityIDFields(recordsReturn, tmpEntity);
 					this.pict.EntityProvider.cacheConnectedEntityRecordsWithoutCount(recordsReturn, IDFields, ['User', 'User'], false, () =>
 					{
 						resolve({ Records: recordsReturn, Facets: { } });
@@ -498,17 +551,7 @@ class MeadowEndpointsRecordSetProvider extends libRecordSetProviderBase
 					return reject(pError);
 				}
 				const recordsReturn = this.pict.resolveStateFromAddress(tmpExperience.ResultDestinationAddress);
-				const IDFields = ['CreatingIDUser', 'UpdatingIDUser'];
-				if (recordsReturn.length)
-				{
-					for (const k of Object.keys(recordsReturn[0]))
-					{
-						if (k.startsWith('ID') && k !== `ID${ tmpEntity }`)
-						{
-							IDFields.push(k);
-						}
-					}
-				}
+				const IDFields = this.inferConnectedEntityIDFields(recordsReturn, tmpEntity);
 				// Use the NoCount (lazy-page) batch: counts are very costly in this MySQL,
 				// and the count-based variant serializes one slow COUNT per reference entity,
 				// stalling the queue so later entities (e.g. Project) never batch and fall
