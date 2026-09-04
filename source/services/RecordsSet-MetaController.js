@@ -361,6 +361,12 @@ class RecordSetMetacontroller extends libFableServiceProviderBase
 				{
 					providerConfiguration.IgnoreFilterFields = [ 'Deleted', 'DeletingIDUser', 'DeleteDate' ];
 				}
+				// Columns that look like foreign keys but are denormalized data, so the
+				// provider must not bulk-prefetch them as connected entities.
+				if (`RecordSetIgnoreConnectedEntityFields` in pRecordSetConfiguration)
+				{
+					providerConfiguration.IgnoreConnectedEntityFields = pRecordSetConfiguration.RecordSetIgnoreConnectedEntityFields;
+				}
 				if (`RecordSetFieldFilterClauses` in pRecordSetConfiguration)
 				{
 					providerConfiguration.FieldFilterClauses = pRecordSetConfiguration.RecordSetFieldFilterClauses;

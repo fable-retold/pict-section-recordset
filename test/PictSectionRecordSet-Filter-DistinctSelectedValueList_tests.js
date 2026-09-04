@@ -19,6 +19,7 @@ const Expect = Chai.expect;
 
 const libPict = require('pict');
 
+const libPictSectionRecordSet = require('../source/Pict-Section-RecordSet.js');
 const libRecordProviderMeadow = require('../source/providers/RecordSet-RecordProvider-MeadowEndpoints.js');
 const libRecordProviderBase = require('../source/providers/RecordSet-RecordProvider-Base.js');
 const libFilterDistinctView = require('../source/views/filters/RecordSet-Filter-DistinctSelectedValueList.js');
@@ -305,6 +306,38 @@ suite
 						const tmpFields = tmpProvider.inferConnectedEntityIDFields([ { IDBook: 1, IDAuthor: 2 } ], 'Book');
 						Expect(tmpFields).to.not.include('IDBook');
 						Expect(tmpFields).to.include('IDAuthor');
+					}
+				);
+
+				test
+				(
+					'RecordSetIgnoreConnectedEntityFields passes through from the recordset configuration',
+					() =>
+					{
+						// The knob is only usable if an app can declare it the same way it
+						// declares RecordSetIgnoreFilterFields — via the recordset config,
+						// not by reaching into provider options.
+						const tmpPict = new libPict();
+						// eslint-disable-next-line no-unused-vars
+						const tmpEnvironment = new libPict.EnvironmentObject(tmpPict);
+						// Pict-Section-RecordSet IS the MetaController that maps recordset
+						// configuration onto provider options.
+						const tmpMetaController = new libPictSectionRecordSet(tmpPict, {}, 'PictSectionRecordSet');
+						tmpMetaController.loadRecordSetConfiguration(
+							{
+								RecordSet: 'PassThroughSet',
+								RecordSetType: 'MeadowEndpoint',
+								RecordSetMeadowEntity: 'C182_PD_HmaMixSieveWide',
+								RecordSetURLPrefix: '/1.0/PrivateDataLake/PD/',
+								RecordSetIgnoreConnectedEntityFields: [ 'IDDocument' ],
+							});
+						const tmpProvider = tmpPict.providers['RSP-Provider-PassThroughSet'];
+						Expect(tmpProvider.constructor.name).to.equal('MeadowEndpointsRecordSetProvider');
+						Expect(tmpProvider).to.exist;
+						Expect(tmpProvider.ignoreConnectedEntityFields).to.deep.equal([ 'IDDocument' ]);
+						const tmpFields = tmpProvider.inferConnectedEntityIDFields([ { IDDocument: 1, IDProject: 2 } ], 'C182_PD_HmaMixSieveWide');
+						Expect(tmpFields).to.not.include('IDDocument');
+						Expect(tmpFields).to.include('IDProject');
 					}
 				);
 
