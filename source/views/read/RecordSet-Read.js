@@ -508,8 +508,10 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		tmpProviderConfiguration.GUIDRecord = tmpGUIDRecord;
 		this._activeReadRecordSet = tmpRecordSet;
 		this._activeReadGUIDRecord = tmpGUIDRecord;
-		this._pendingReadTab = tmpTab;
+		// A custom view owns its own paint and never consumes _pendingReadTab; stage the pending tab ONLY for the
+		// generic renderRead path below, so a delegated view can't leave a stale tab to leak onto the next read.
 		if (this.delegateToCustomView(this.action, tmpProviderConfiguration, pRoutePayload)) { return true; }
+		this._pendingReadTab = tmpTab;
 		return this.renderRead(tmpProviderConfiguration, tmpProviderHash, tmpGUIDRecord);
 	}
 
@@ -1088,6 +1090,15 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 	 */
 	navigateTab(t)
 	{
+		// Only a live View has a stable per-tab route (/PSRS/:RecordSet/View/:GUIDRecord/:Tab). In Edit mode a tab
+		// switch must stay a DOM-only toggle — rewriting the hash to a View URL would re-fetch the record and silently
+		// discard the in-progress edit. On a soft-deleted (ViewDeleted) page there is no /ViewDeleted/:Tab route, and
+		// the stashed identity may still point at a previously-viewed live record, so a View hash would jump off the
+		// deleted record (or re-render it through the live lookup that filters it out). Toggle in place in both cases.
+		if ((this.action === 'Edit') || (this.viewingDeletedRecord === true))
+		{
+			return this.setTab(t);
+		}
 		const tmpRecordSet = this._activeReadRecordSet;
 		const tmpGUID = this._activeReadGUIDRecord;
 		if (tmpRecordSet && tmpGUID && (typeof window !== 'undefined') && window.location)
@@ -1100,6 +1111,14 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 
 	async setTab(t)
 	{
+		// Guard against a stale/unknown tab hash (a bookmarked tab renamed across deploys, or one conditionally
+		// skipped for this particular record): in a tabbed layout the record body itself lives inside a tab, so
+		// activating a hash that matches no tab would leave every body hidden and blank the whole record. Clamp to
+		// the first real tab. Split's synthetic 'FullRecord' has no tab body (it collapses the pane), so leave it be.
+		if ((this.layoutType !== 'Split') && t && Array.isArray(this.tabs) && (this.tabs.length > 0) && !this.tabs.some((tmpReadTab) => (tmpReadTab.Hash === t)))
+		{
+			t = this.tabs[0].Hash;
+		}
 		// Split layout opens to the record alone via the "Full Record" tab. Choosing an association tab
 		// expands its editor beside the record; choosing "Full Record" (or re-choosing the active tab)
 		// collapses back to the record-only view. Other layouts always activate the target.
