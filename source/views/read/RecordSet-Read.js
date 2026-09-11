@@ -418,6 +418,9 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		tmpProviderConfiguration.RoutePayload = pRoutePayload;
 		tmpProviderConfiguration.RecordSet = pRoutePayload.data.RecordSet;
 		tmpProviderConfiguration.GUIDRecord = pRoutePayload.data.GUIDRecord;
+		// Remember the record on screen so navigateTab() can build the stable tab route for it.
+		this._activeReadRecordSet = pRoutePayload.data.RecordSet;
+		this._activeReadGUIDRecord = pRoutePayload.data.GUIDRecord;
 
 		if (this.delegateToCustomView(this.action, tmpProviderConfiguration, pRoutePayload)) { return true; }
 
@@ -474,9 +477,47 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 		return this.renderRead(tmpProviderConfiguration, tmpProviderHash, pRoutePayload.data.GUIDRecord);
 	}
 
+	/**
+	 * The tabbed read route (`/PSRS/:RecordSet/View/:GUIDRecord/:Tab`): the read view's own tab clicks navigate
+	 * here (via navigateTab) so the active tab is a real URL. When the requested record is already on screen this
+	 * is a DOM-only setTab (no reload); a cold deep-link renders the record and lands on the requested tab (stashed
+	 * in _pendingReadTab, consumed by the first paint). The base View route without a tab still works unchanged.
+	 */
+	handleRecordSetReadTabRoute(pRoutePayload)
+	{
+		if (typeof(pRoutePayload) != 'object')
+		{
+			throw new Error(`Pict RecordSet Read view route handler called with invalid route payload.`);
+		}
+		const tmpRecordSet = pRoutePayload.data.RecordSet;
+		const tmpGUIDRecord = pRoutePayload.data.GUIDRecord;
+		const tmpTab = pRoutePayload.data.Tab;
+		// Already viewing this exact record → just switch the tab in place (setTab toggles the DOM; no re-fetch).
+		if ((this.action === 'View') && !this.viewingDeletedRecord && (this._activeReadRecordSet === tmpRecordSet) && (this._activeReadGUIDRecord === tmpGUIDRecord))
+		{
+			return this.setTab(tmpTab);
+		}
+		// Cold deep-link: render the record, landing on the requested tab (via _pendingReadTab on first paint).
+		this.action = 'View';
+		this.viewingDeletedRecord = false;
+		const tmpProviderConfiguration = this.pict.PictSectionRecordSet.recordSetProviderConfigurations[tmpRecordSet];
+		this.layoutType = tmpProviderConfiguration?.ReadLayout || 'Basic';
+		const tmpProviderHash = `RSP-Provider-${tmpRecordSet}`;
+		tmpProviderConfiguration.RoutePayload = pRoutePayload;
+		tmpProviderConfiguration.RecordSet = tmpRecordSet;
+		tmpProviderConfiguration.GUIDRecord = tmpGUIDRecord;
+		this._activeReadRecordSet = tmpRecordSet;
+		this._activeReadGUIDRecord = tmpGUIDRecord;
+		this._pendingReadTab = tmpTab;
+		if (this.delegateToCustomView(this.action, tmpProviderConfiguration, pRoutePayload)) { return true; }
+		return this.renderRead(tmpProviderConfiguration, tmpProviderHash, tmpGUIDRecord);
+	}
+
 	addRoutes(pPictRouter)
 	{
 		pPictRouter.addRoute('/PSRS/:RecordSet/View/:GUIDRecord', this.handleRecordSetReadRoute.bind(this));
+		// A specific tab on the read view, as a stable/deep-linkable route (see navigateTab + handleRecordSetReadTabRoute).
+		pPictRouter.addRoute('/PSRS/:RecordSet/View/:GUIDRecord/:Tab', this.handleRecordSetReadTabRoute.bind(this));
 		pPictRouter.addRoute('/PSRS/:RecordSet/ViewDeleted/:GUIDRecord', this.handleRecordSetReadDeletedRoute.bind(this));
 		pPictRouter.addRoute('/PSRS/:RecordSet/Edit/:GUIDRecord', this.handleRecordSetEditRoute.bind(this));
 		return true;
@@ -1028,10 +1069,33 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 						tmpDeleteButton.classList.remove('record-button-bar-hidden');
 					}
 				}
-				// Split opens to the record alone via the Full Record tab; other tabbed layouts default to the first tab.
-				this.setTab(this.activeTab || (this.layoutType === 'Split' ? 'FullRecord' : this.tabs?.[0]?.Hash));
+				// Split opens to the record alone via the Full Record tab; other tabbed layouts default to the first
+				// tab — unless a stable-route deep-link (/PSRS/:RecordSet/View/:GUIDRecord/:Tab) requested a specific
+				// tab, which wins for this first paint and is then consumed.
+				this.setTab(this._pendingReadTab || this.activeTab || (this.layoutType === 'Split' ? 'FullRecord' : this.tabs?.[0]?.Hash));
+				this._pendingReadTab = null;
 				return true;
 			}.bind(this));
+	}
+
+	/**
+	 * Switch tabs via a STABLE ROUTE (`#/PSRS/<RecordSet>/View/<GUIDRecord>/<tab>`) so the active tab lives in the
+	 * URL — deep-linkable, bookmarkable, browser back/forward — instead of a URL-less DOM toggle. The tab buttons
+	 * call this; the `:Tab` route (handleRecordSetReadTabRoute) applies it in place (setTab is DOM-only, so an
+	 * already-open record just switches tabs, no reload). Falls back to a direct setTab when the record identity
+	 * or window isn't available (e.g. a host that hasn't wired routing).
+	 * @param {string} t - the tab Hash
+	 */
+	navigateTab(t)
+	{
+		const tmpRecordSet = this._activeReadRecordSet;
+		const tmpGUID = this._activeReadGUIDRecord;
+		if (tmpRecordSet && tmpGUID && (typeof window !== 'undefined') && window.location)
+		{
+			window.location.hash = `#/PSRS/${ tmpRecordSet }/View/${ tmpGUID }/${ t }`;
+			return true;
+		}
+		return this.setTab(t);
 	}
 
 	async setTab(t)
@@ -1258,7 +1322,7 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 					<div id="PSRS-Tab-Record" class="psrs-tab-body">{~T:PRSP-Read-RecordRead-Template~}</div>
 				`,
 				TabTemplate: /*html*/`
-					<div class="psrs-tab" id="PSRS-TabNav-Record" onclick="_Pict.views['RSP-RecordSet-Read'].setTab('Record')">${ config.RecordSetReadTabTitle || 'Record' }</div>
+					<div class="psrs-tab" id="PSRS-TabNav-Record" onclick="_Pict.views['RSP-RecordSet-Read'].navigateTab('Record')">${ config.RecordSetReadTabTitle || 'Record' }</div>
 				`,
 				render: () => {}
 			}
@@ -1274,7 +1338,7 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 					<div id="PSRS-Tab-FullRecord" class="psrs-tab-body"></div>
 				`,
 				TabTemplate: /*html*/`
-					<div class="psrs-tab" id="PSRS-TabNav-FullRecord" onclick="_Pict.views['RSP-RecordSet-Read'].setTab('FullRecord')">${ config.RecordSetReadFullRecordTabTitle || 'Full Record' }</div>
+					<div class="psrs-tab" id="PSRS-TabNav-FullRecord" onclick="_Pict.views['RSP-RecordSet-Read'].navigateTab('FullRecord')">${ config.RecordSetReadFullRecordTabTitle || 'Full Record' }</div>
 				`,
 				render: () => {}
 			}
@@ -1401,7 +1465,7 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 					<div id="PSRS-Tab-${ t.Hash }" class="psrs-tab-body">${ this._generateManifestTemplate(config, 'RecordTab', t.Manifest, false, 'View', recordSetConfig && !recordSetConfig.RecordSetReadManifestOnly ? tmpManifest : null) }</div>
 				`;
 				t.TabTemplate = /*html*/`
-					<div class="psrs-tab" id="PSRS-TabNav-${ t.Hash }" onclick="_Pict.views['RSP-RecordSet-Read'].setTab('${ t.Hash }')">${ t.Title }</div>
+					<div class="psrs-tab" id="PSRS-TabNav-${ t.Hash }" onclick="_Pict.views['RSP-RecordSet-Read'].navigateTab('${ t.Hash }')">${ t.Title }</div>
 				`;
 				t.render = () =>
 				{
@@ -1431,7 +1495,7 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 					<div id="PSRS-Tab-${ t.Hash }" class="psrs-tab-body"></div>
 				`;
 				t.TabTemplate = /*html*/`
-					<div class="psrs-tab" id="PSRS-TabNav-${ t.Hash }" onclick="_Pict.views['RSP-RecordSet-Read'].setTab('${ t.Hash }')">${ t.Title }</div>
+					<div class="psrs-tab" id="PSRS-TabNav-${ t.Hash }" onclick="_Pict.views['RSP-RecordSet-Read'].navigateTab('${ t.Hash }')">${ t.Title }</div>
 				`;
 				tmpView.options.DefaultDestinationAddress = `#PSRS-Tab-${ t.Hash }`;
 				t.render = () =>
@@ -1480,7 +1544,7 @@ class viewRecordSetRead extends libPictRecordSetRecordView
 					<div id="PSRS-Tab-${ t.Hash }" class="psrs-tab-body"></div>
 				`;
 				t.TabTemplate = /*html*/`
-					<div class="psrs-tab" id="PSRS-TabNav-${ t.Hash }" onclick="_Pict.views['RSP-RecordSet-Read'].setTab('${ t.Hash }')">${ t.Title }</div>
+					<div class="psrs-tab" id="PSRS-TabNav-${ t.Hash }" onclick="_Pict.views['RSP-RecordSet-Read'].navigateTab('${ t.Hash }')">${ t.Title }</div>
 				`;
 				t.renderAsync = async () =>
 				{
