@@ -147,7 +147,7 @@ const _DEFAULT_CONFIGURATION_AssociationEditor = (
 			},
 			{
 				Hash: 'PRSP-AssociationEditor-SynthBtn',
-				Template: /*html*/`<button type="button" class="prsp-assoc-synth-btn" title="Add the default associations" onclick="_Pict.views['{~D:Record.ViewHash~}'].synthesizeDefaults()">{~I:Download~} Add defaults</button>`
+				Template: /*html*/`<button type="button" class="prsp-assoc-synth-btn" title="Pull the inherited default associations in so you can customize them" onclick="_Pict.views['{~D:Record.ViewHash~}'].synthesizeDefaults()">{~I:Download~} Customize Defaults</button>`
 			},
 			{
 				// One editable per-join config control (a "rich" join's settings, e.g. Journal / Spreadsheet
@@ -381,9 +381,31 @@ class viewRecordSetAssociationEditor extends libPictView
 		{
 			return;
 		}
+		// Seed-on-first-customize: while this anchor is inheriting the default set (no associations of its own)
+		// and the association has a defaults synthesizer, materialize those defaults FIRST — otherwise adding the
+		// first item breaks inheritance and the rest of the inherited set silently disappears. Any staged id the
+		// synthesizer already created is then skipped so it is not duplicated. Best-effort (never blocks the add).
+		let tmpPresent = null;
+		if (((this._otherIDs || []).length === 0) && this.manager.hasDefaultSynthesizer(this.options.AssociationHash))
+		{
+			try
+			{
+				const tmpSynth = await this.manager.synthesizeDefaults(this.options.AssociationHash, this.options.ThisRecordSet, this.options.ThisID);
+				if (tmpSynth && (tmpSynth.created > 0))
+				{
+					const tmpSeeded = await this.manager.listAssociatedRecords(this.options.AssociationHash, this.options.ThisRecordSet, this.options.ThisID);
+					tmpPresent = new Set((tmpSeeded || []).map((pItem) => `${pItem.OtherID}`));
+				}
+			}
+			catch (pError)
+			{
+				this.pict.log.warn(`AssociationEditor [${this.Hash}]: seed-on-add synthesize failed.`, pError);
+			}
+		}
 		let tmpFailures = 0;
 		for (let i = 0; i < tmpIDs.length; i++)
 		{
+			if (tmpPresent && tmpPresent.has(`${tmpIDs[i]}`)) { continue; }
 			try
 			{
 				await this.manager.createJoin(this.options.AssociationHash, this.options.ThisRecordSet, this.options.ThisID, tmpIDs[i]);
