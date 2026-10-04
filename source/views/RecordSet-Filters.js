@@ -946,10 +946,20 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		{
 			/** @type {Array<string>} */
 			const searchFields = tmpProviderConfiguration?.SearchFields ?? [ 'Name' ];
-			// The first stanza MUST anchor with FBV (AND); only the rest are FBVOR. A chain that is
-			// *all* FBVOR has no anchoring clause, so FoxHound leaves the OR group unconstrained and
-			// every row matches — which silently broke multi-field search (single-field masked it).
-			filterExpr = searchFields.map((filterField, filterIndex) => `${filterIndex === 0 ? 'FBV' : 'FBVOR'}~${filterField}~LK~${encodeURIComponent(`%${pFilterString}%`)}`).join('~');
+			// Tokenize the query on whitespace: AND one clause per token, and within each token OR across the
+			// search fields inside a parenthesized group (FOP..FCP). This lets a value split across columns —
+			// e.g. a person's NameFirst + NameLast — still match a multi-word query like "Derek Woods" (no single
+			// column ever contains the whole phrase, so the old whole-phrase-per-field chain returned nothing).
+			// Each token's OR group is self-contained by its paren, so the group is anchored (no unconstrained
+			// all-FBVOR match-everything bug) AND the tokens AND cleanly with each other and any other clauses.
+			const tmpSearchTokens = String(pFilterString).split(/\s+/).map((pToken) => pToken.trim()).filter((pToken) => pToken.length > 0);
+			filterExpr = tmpSearchTokens.map((pToken) =>
+			{
+				const tmpEncoded = encodeURIComponent(`%${pToken}%`);
+				if (searchFields.length === 1) { return `FBV~${searchFields[0]}~LK~${tmpEncoded}`; }
+				const tmpTokenClause = searchFields.map((filterField, filterIndex) => `${filterIndex === 0 ? 'FBV' : 'FBVOR'}~${filterField}~LK~${tmpEncoded}`).join('~');
+				return `FOP~0~(~0~${tmpTokenClause}~FCP~0~)~0`;
+			}).join('~');
 		}
 		let tmpURLTemplate = tmpProviderConfiguration[`RecordSetFilterURLTemplate-${pViewContext}`] || tmpProviderConfiguration[`RecordSetFilterURLTemplate-Default`];
 		if (!tmpURLTemplate)
