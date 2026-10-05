@@ -47,7 +47,7 @@ const _DEFAULT_CONFIGURATION_List_PaginationTop = (
 	<!-- DefaultPackage pict view template: [PRSP-Dashboard-Pagination-Template-Description] -->
 	<div>
 		Showing
-		<span id="PRSP_Pagination_Description_Records_Start">{~D:Record.Offset~}</span> to
+		<span id="PRSP_Pagination_Description_Records_Start">{~D:Record.PageStart~}</span> to
 		<span id="PRSP_Pagination_Description_Records_End">{~D:Record.PageEnd~}</span> of
 		<span id="PRSP_Pagination_Description_Records_Total">{~D:Record.TotalRecordCount.Count~}</span> total records.
 	</div>

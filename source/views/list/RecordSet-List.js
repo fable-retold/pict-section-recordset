@@ -674,6 +674,8 @@ class viewRecordSetList extends libPictRecordSetRecordView
 
 		// Get the "page end record number" for the current page (e.g. for messaging like Record 700 to 800 of 75,000)
 		tmpRecordListData.PageEnd = Number(tmpRecordListData.Offset) + tmpRecordListData.Records.Records.length;
+		// 1-based start record number for the "Showing X to Y" counter (the raw 0-based Offset would read "0 to ..." on page 1)
+		tmpRecordListData.PageStart = (tmpRecordListData.Records.Records.length > 0) ? (Number(tmpRecordListData.Offset) + 1) : 0;
 
 		// Compute the number of pages total
 		tmpRecordListData.PageCount = Math.ceil(tmpRecordListData.TotalRecordCount.Count / tmpRecordListData.PageSize);
@@ -927,6 +929,8 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		// Get the "page end record number" for the current page (e.g. for messaging like Record 700 to 800 of 75,000)
 		const tmpOffset = Number(tmpRecordListData.Offset);
 		tmpRecordListData.PageEnd = tmpOffset + tmpRecordListData.Records.Records.length;
+		// 1-based start record number for the "Showing X to Y" counter (the raw 0-based Offset would read "0 to ..." on page 1)
+		tmpRecordListData.PageStart = (tmpRecordListData.Records.Records.length > 0) ? (tmpOffset + 1) : 0;
 
 		// Compute the number of pages total
 		tmpRecordListData.PageCount = Math.ceil(tmpRecordListData.TotalRecordCount.Count / tmpRecordListData.PageSize);
