@@ -750,6 +750,52 @@ class ViewRecordSetSUBSETFilters extends libPictView
 	}
 
 	/**
+	 * Create any filter clauses a record set DEFAULTS to, before its first fetch runs.
+	 *
+	 * `DefaultRelativeDays` seeds a trailing date window, but the seed only ever ran as a
+	 * side effect of `getQuickFilterDefinitions`, and the only thing that calls that is this
+	 * view's own `onAfterRender` -- which happens AFTER the records have already come back.
+	 * So the date landed in the input box while the grid showed everything, and the customer's
+	 * "default to the last year" quietly meant "last year, once you press Apply". There is no
+	 * staged-vs-applied split to respect here: the seed writes into the same
+	 * `_ActiveFilterState[...].FilterClauses` array the fetch reads, so the fix is purely a
+	 * matter of running it earlier.
+	 *
+	 * Seeding is safe to force: `_seedRelativeDateDefaults` is once-per-field, refuses to
+	 * write over a bound that already has a value, and can only ever create a clause for a
+	 * field that configured `DefaultRelativeDays`. Call this AFTER any URL / filter-experience
+	 * hydration so a shared link still wins.
+	 *
+	 * The schema must resolve first -- `DefaultRelativeDays` is read off the filter schema,
+	 * which is only built once the entity schema returns.
+	 *
+	 * @param {string} pRecordSet - The record set whose defaults should be seeded.
+	 * @return {Promise<void>}
+	 */
+	async seedDefaultFilterClauses(pRecordSet)
+	{
+		const tmpProvider = this.pict.providers['RSP-Provider-' + pRecordSet];
+		if (!tmpProvider || (typeof tmpProvider.getQuickFilterDefinitions !== 'function'))
+		{
+			return;
+		}
+		try
+		{
+			if (typeof tmpProvider.getRecordSchema === 'function')
+			{
+				await tmpProvider.getRecordSchema();
+			}
+			// Asking for the definitions performs the seed; everything else it does is a read.
+			tmpProvider.getQuickFilterDefinitions(this.quickFiltersAutoDefault);
+		}
+		catch (pError)
+		{
+			// A default that cannot be resolved must never block the page from loading.
+			this.pict.log.warn(`[PRSP-Filters] Could not seed default filter clauses for [${pRecordSet}]: ${pError.message}`);
+		}
+	}
+
+	/**
 	 * The distinct-value filter a clause should actually fetch with: its static `DistinctFilter`
 	 * narrowed by the CURRENT selection of every field named in `CascadeFrom`.
 	 *

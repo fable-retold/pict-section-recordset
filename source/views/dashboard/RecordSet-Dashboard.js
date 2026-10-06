@@ -314,6 +314,13 @@ class viewRecordSetDashboard extends libPictRecordSetRecordView
 		};
 
 		// TODO: There are still problems with the way these have nested data.  Discuss how we might move that around
+		// Seed any configured default filter clauses (e.g. DefaultRelativeDays) BEFORE the
+		// fetch, so the first paint is already filtered the way the dashboard is configured
+		// rather than filtered only once the user presses Apply.
+		if (this.pict.views['PRSP-Filters'] && (typeof this.pict.views['PRSP-Filters'].seedDefaultFilterClauses === 'function'))
+		{
+			await this.pict.views['PRSP-Filters'].seedDefaultFilterClauses(tmpRecordDashboardData.RecordSet);
+		}
 		// Fetch the records
 		tmpRecordDashboardData.Records = await this.pict.providers[pProviderHash].getDecoratedRecords(tmpRecordDashboardData);
 		// Get the total record count
@@ -659,6 +666,13 @@ class viewRecordSetDashboard extends libPictRecordSetRecordView
 
 		// TODO: There are still problems with the way these have nested data.  Discuss how we might move that around
 		// Fetch the records
+		// Seed any configured default filter clauses (e.g. DefaultRelativeDays) BEFORE the
+		// fetch, so the first paint is already filtered the way the dashboard is configured
+		// rather than filtered only once the user presses Apply.
+		if (this.pict.views['PRSP-Filters'] && (typeof this.pict.views['PRSP-Filters'].seedDefaultFilterClauses === 'function'))
+		{
+			await this.pict.views['PRSP-Filters'].seedDefaultFilterClauses(tmpRecordDashboardData.RecordSet);
+		}
 		const [ tmpRecords, tmpTotalRecordCount, tmpRecordSchema ] = await Promise.all([
 			this.pict.providers[pProviderHash].getDecoratedRecords(tmpRecordDashboardData),
 			this.pict.providers[pProviderHash].getRecordSetCount(tmpRecordDashboardData),

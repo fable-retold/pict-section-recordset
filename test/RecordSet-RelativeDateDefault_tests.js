@@ -140,3 +140,103 @@ suite('RecordSet relative date default', () =>
 		}
 	});
 });
+
+suite('RecordSet default filter clauses apply on load', () =>
+{
+	const libFiltersView = require('../source/views/RecordSet-Filters.js');
+
+	/**
+	 * A filters-view stand-in exposing only what seedDefaultFilterClauses touches.
+	 * The view's own constructor builds the whole filter view family (and pulls in
+	 * pict-section-form's dependency manager), so the method is exercised against
+	 * the prototype instead.
+	 *
+	 * @param {object} pProvider - the record provider stub to register.
+	 * @return {object}
+	 */
+	function filtersViewStub(pProvider)
+	{
+		return {
+			quickFiltersAutoDefault: true,
+			pict: { providers: { 'RSP-Provider-Samples': pProvider }, log: { warn: () => {} } },
+			seedDefaultFilterClauses: libFiltersView.prototype.seedDefaultFilterClauses,
+		};
+	}
+
+	/**
+	 * @param {boolean} pSchemaResolves - whether getRecordSchema settles or throws.
+	 * @return {object}
+	 */
+	function providerStubForSeeding(pSchemaResolves)
+	{
+		return {
+			schemaAwaited: false,
+			definitionsAsked: 0,
+			getRecordSchema: function ()
+			{
+				this.schemaAwaited = true;
+				return pSchemaResolves ? Promise.resolve({}) : Promise.reject(new Error('schema exploded'));
+			},
+			getQuickFilterDefinitions: function () { this.definitionsAsked++; return []; },
+		};
+	}
+
+	test('seeding asks for the schema BEFORE the definitions', async () =>
+	{
+		// DefaultRelativeDays is read off the filter schema, which only exists once the
+		// entity schema resolves -- asking for definitions first would seed nothing.
+		const tmpProvider = providerStubForSeeding(true);
+		await filtersViewStub(tmpProvider).seedDefaultFilterClauses('Samples');
+		Expect(tmpProvider.schemaAwaited, 'schema must be awaited').to.equal(true);
+		Expect(tmpProvider.definitionsAsked, 'definitions drive the seed').to.equal(1);
+	});
+
+	test('a schema failure never blocks the page load', async () =>
+	{
+		const tmpProvider = providerStubForSeeding(false);
+		let tmpThrew = false;
+		try { await filtersViewStub(tmpProvider).seedDefaultFilterClauses('Samples'); }
+		catch (pError) { tmpThrew = true; }
+		Expect(tmpThrew, 'a broken default must not stop the list rendering').to.equal(false);
+	});
+
+	test('an unknown record set is a no-op, not a crash', async () =>
+	{
+		let tmpThrew = false;
+		try { await filtersViewStub(providerStubForSeeding(true)).seedDefaultFilterClauses('NoSuchSet'); }
+		catch (pError) { tmpThrew = true; }
+		Expect(tmpThrew).to.equal(false);
+	});
+
+	test('every initial fetch site seeds before fetching', () =>
+	{
+		// The whole bug was ORDER: the seed used to run in the filter view's
+		// onAfterRender, i.e. after the records had already come back. Guard the
+		// ordering at each of the four fetch sites so it cannot regress.
+		const libFS = require('fs');
+		// EVERY fetch name, not just getRecords: the records on a dashboard come back
+		// through getDecoratedRecords, and seeding after THAT call (but before the
+		// count) shipped a page reading "Showing 1 to 949 of 864" — rows unfiltered,
+		// total filtered.
+		const tmpSites =
+		[
+			{ File: '../source/views/list/RecordSet-List.js', Fetch: 'getRecords(tmpRecordListData)' },
+			{ File: '../source/views/list/RecordSet-List.js', Fetch: 'TotalRecordCount = await this.pict.providers[pProviderHash].getRecordSetCount(tmpRecordListData)' },
+			{ File: '../source/views/list/RecordSet-List.js', Fetch: 'getDecoratedRecords(tmpRecordListData)' },
+			{ File: '../source/views/dashboard/RecordSet-Dashboard.js', Fetch: 'getDecoratedRecords(tmpRecordDashboardData);' },
+			{ File: '../source/views/dashboard/RecordSet-Dashboard.js', Fetch: 'TotalRecordCount = await this.pict.providers[pProviderHash].getRecordSetCount(tmpRecordDashboardData)' },
+			{ File: '../source/views/dashboard/RecordSet-Dashboard.js', Fetch: 'getDecoratedRecords(tmpRecordDashboardData),' },
+			{ File: '../source/views/dashboard/RecordSet-Dashboard.js', Fetch: 'getRecordSetCount(tmpRecordDashboardData),' },
+		];
+		for (const tmpSite of tmpSites)
+		{
+			const tmpSource = libFS.readFileSync(require.resolve(tmpSite.File), 'utf8');
+			const tmpFetchIndex = tmpSource.indexOf(tmpSite.Fetch);
+			Expect(tmpFetchIndex, `fetch site not found: ${tmpSite.Fetch}`).to.be.greaterThan(-1);
+			const tmpSeedIndex = tmpSource.lastIndexOf('seedDefaultFilterClauses', tmpFetchIndex);
+			Expect(tmpSeedIndex, `no seed call before ${tmpSite.Fetch}`).to.be.greaterThan(-1);
+			// And it must be close by, not an unrelated earlier call.
+			Expect(tmpFetchIndex - tmpSeedIndex, `seed call is too far from ${tmpSite.Fetch}`).to.be.lessThan(900);
+		}
+	});
+});

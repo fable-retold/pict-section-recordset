@@ -660,6 +660,13 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		// TODO: There are still problems with the way these have nested data.  Discuss how we might move that around
 		// Paint a loading shell before the (potentially slow) fetch so the prior page
 		// doesn't sit silently; the real list render replaces it when data arrives.
+		// Seed any configured default filter clauses (e.g. DefaultRelativeDays) BEFORE the
+		// fetch, so the first paint is already filtered the way the dashboard is configured
+		// rather than filtered only once the user presses Apply.
+		if (this.pict.views['PRSP-Filters'] && (typeof this.pict.views['PRSP-Filters'].seedDefaultFilterClauses === 'function'))
+		{
+			await this.pict.views['PRSP-Filters'].seedDefaultFilterClauses(tmpRecordListData.RecordSet);
+		}
 		this._projectLoadingShell(tmpRecordListData);
 		// Fetch the records
 		const [ tmpRecords, tmpTotalRecordCount, tmpRecordSchema ] = await Promise.all([
@@ -919,6 +926,13 @@ class viewRecordSetList extends libPictRecordSetRecordView
 		// TODO: There are still problems with the way these have nested data.  Discuss how we might move that around
 		// Paint a loading shell before the (potentially slow) fetch so the prior page
 		// doesn't sit silently; the real list render replaces it when data arrives.
+		// Seed any configured default filter clauses (e.g. DefaultRelativeDays) BEFORE the
+		// fetch, so the first paint is already filtered the way the dashboard is configured
+		// rather than filtered only once the user presses Apply.
+		if (this.pict.views['PRSP-Filters'] && (typeof this.pict.views['PRSP-Filters'].seedDefaultFilterClauses === 'function'))
+		{
+			await this.pict.views['PRSP-Filters'].seedDefaultFilterClauses(tmpRecordListData.RecordSet);
+		}
 		this._projectLoadingShell(tmpRecordListData);
 		// Fetch the records
 		tmpRecordListData.Records = await this.pict.providers[pProviderHash].getDecoratedRecords(tmpRecordListData);
