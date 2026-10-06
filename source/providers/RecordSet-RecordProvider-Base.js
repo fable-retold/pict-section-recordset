@@ -406,7 +406,49 @@ class RecordSetProviderBase extends libPictProvider
 			const tmpDefinition = this._resolveQuickFilterDefinition(tmpEntry);
 			if (tmpDefinition) { tmpDefinitions.push(tmpDefinition); }
 		}
+		this._seedRelativeDateDefaults(tmpDefinitions);
 		return tmpDefinitions;
+	}
+
+	/**
+	 * Seed a date-range quick filter to a trailing window on FIRST use.
+	 *
+	 * A clause can only hold literal bounds, so "default to the last year" cannot
+	 * be stored as configuration — a date baked in when the dashboard was authored
+	 * silently means "365 days before the day someone generated this", and rots.
+	 * `DefaultRelativeDays: 365` on the clause descriptor instead resolves against
+	 * TODAY, here, every time the bar is built.
+	 *
+	 * Seeds ONLY when the user has no value of their own: an explicit pick, a
+	 * cleared filter, or a restored filter experience all win, because overriding
+	 * those would make the control feel broken. That is also why it seeds the
+	 * clause rather than forcing it on every render.
+	 *
+	 * @param {Array<Record<string, any>>} pDefinitions - Resolved quick-filter definitions.
+	 * @private
+	 */
+	_seedRelativeDateDefaults(pDefinitions)
+	{
+		if (!Array.isArray(pDefinitions)) { return; }
+		this._SeededRelativeDates = this._SeededRelativeDates || {};
+		for (const tmpDefinition of pDefinitions)
+		{
+			if (tmpDefinition.Control !== 'daterange') { continue; }
+			if (this._SeededRelativeDates[tmpDefinition.Field]) { continue; }
+			const tmpSchema = this.getFilterClauseSchemaForKey(tmpDefinition.Field);
+			const tmpClause = (tmpSchema && Array.isArray(tmpSchema.AvailableClauses))
+				? tmpSchema.AvailableClauses.find((pClause) => pClause.ClauseKey === tmpDefinition.ClauseKey) : null;
+			const tmpDays = tmpClause ? parseInt(tmpClause.DefaultRelativeDays, 10) : NaN;
+			if (!(tmpDays > 0)) { continue; }
+			// Mark it seeded BEFORE the bounds check: a user who clears the filter
+			// must not have it re-seeded from under them on the next render.
+			this._SeededRelativeDates[tmpDefinition.Field] = true;
+			const tmpCurrent = this.getQuickFilterDateRangeValue(tmpDefinition.Field);
+			if (tmpCurrent.Start || tmpCurrent.End) { continue; }
+			const tmpStart = new Date();
+			tmpStart.setDate(tmpStart.getDate() - tmpDays);
+			this.upsertQuickFilterDateRange(tmpDefinition.Field, tmpDefinition.ClauseKey, 'Start', tmpStart.toISOString().slice(0, 10));
+		}
 	}
 
 	/**

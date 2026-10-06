@@ -158,7 +158,11 @@ class viewRecordSetList extends libPictRecordSetRecordView
 
 		if (this.delegateToCustomView('List', tmpProviderConfiguration, pRoutePayload)) { return true; }
 
-		const tmpFilterString = pRoutePayload.data.FilterString || '';
+		// Seed the initial-load filter from the recordset's RecordSetDefaultFilter when the URL supplies none (a plain
+		// /PSRS/<set>/List with no /FilteredTo/ segment). This is how a recordset's default sort/filter (e.g. a
+		// FSF~<dateColumn>~DESC~0 date-spine sort) actually reaches SQL on first paint -- otherwise the empty filter
+		// yields primary-key order. Any user filter/sort produces a /FilteredTo/... URL, so pRoutePayload wins thereafter.
+		const tmpFilterString = pRoutePayload.data.FilterString || (tmpProviderConfiguration && tmpProviderConfiguration.RecordSetDefaultFilter) || '';
 		const tmpFilterExperience = pRoutePayload.data.FilterExperience || '';
 
 		const tmpOffset = pRoutePayload.data.Offset ? pRoutePayload.data.Offset : 0;
