@@ -105,7 +105,7 @@ class ViewRecordSetSUBSETFilterDistinctSelectedValueList extends ViewRecordSetSU
 		let tmpValues = Array.isArray(pClause.Options) ? pClause.Options.slice() : null;
 		if (!tmpValues)
 		{
-			const tmpCacheKey = pClause.DistinctFilter ? `${pClause.FilterByColumn}::${pClause.DistinctFilter}` : pClause.FilterByColumn;
+			const tmpCacheKey = this._distinctCacheKey(pClause, pProvider);
 			const tmpCached = (pProvider && pProvider._scopeDistinctCache) ? pProvider._scopeDistinctCache[tmpCacheKey] : null;
 			tmpValues = Array.isArray(tmpCached) ? tmpCached.slice() : [];
 		}
@@ -120,6 +120,48 @@ class ViewRecordSetSUBSETFilterDistinctSelectedValueList extends ViewRecordSetSU
 			}
 		}
 		return tmpValues;
+	}
+
+	/**
+	 * This clause's static `DistinctFilter` narrowed by the current selection of every field named
+	 * in `CascadeFrom` — the same rule the quick-filter bar applies, so the drawer control and the
+	 * quick control always offer the same option list for a field. A parent with nothing selected
+	 * narrows nothing.
+	 *
+	 * @param {Record<string, any>} pClause @param {Record<string, any>} pProvider
+	 * @return {string} The FoxHound filter stanza chain, or '' for no filter.
+	 */
+	_resolveDistinctFilter(pClause, pProvider)
+	{
+		let tmpFilter = pClause.DistinctFilter || '';
+		const tmpParentFields = Array.isArray(pClause.CascadeFrom) ? pClause.CascadeFrom : [];
+		if ((tmpParentFields.length === 0) || !pProvider || (typeof pProvider.getQuickFilterEntityValue !== 'function'))
+		{
+			return tmpFilter;
+		}
+		for (const tmpParentField of tmpParentFields)
+		{
+			const tmpValues = pProvider.getQuickFilterEntityValue(tmpParentField);
+			if (!Array.isArray(tmpValues) || (tmpValues.length === 0)) { continue; }
+			// A value carrying a comma would split the IN list, so those are skipped.
+			const tmpUsable = tmpValues.filter((pValue) => String(pValue).indexOf(',') === -1);
+			if (tmpUsable.length === 0) { continue; }
+			tmpFilter += `${tmpFilter ? '~' : ''}FBL~${tmpParentField}~INN~${tmpUsable.join(',')}`;
+		}
+		return tmpFilter;
+	}
+
+	/**
+	 * The provider cache key for this clause's distinct values. The resolved filter is part of the
+	 * key, so each parent selection caches on its own and going back to a previous one is instant.
+	 *
+	 * @param {Record<string, any>} pClause @param {Record<string, any>} pProvider
+	 * @return {string}
+	 */
+	_distinctCacheKey(pClause, pProvider)
+	{
+		const tmpFilter = this._resolveDistinctFilter(pClause, pProvider);
+		return tmpFilter ? `${pClause.FilterByColumn}::${tmpFilter}` : pClause.FilterByColumn;
 	}
 
 	/**
@@ -155,13 +197,13 @@ class ViewRecordSetSUBSETFilterDistinctSelectedValueList extends ViewRecordSetSU
 		if (!Array.isArray(pRecord.Options) && pRecord.FilterByColumn
 			&& tmpProvider && typeof tmpProvider.getRecordSetColumnDistinct === 'function')
 		{
-			const tmpCacheKey = pRecord.DistinctFilter ? `${pRecord.FilterByColumn}::${pRecord.DistinctFilter}` : pRecord.FilterByColumn;
+			const tmpCacheKey = this._distinctCacheKey(pRecord, tmpProvider);
 			if (!tmpProvider._scopeDistinctCache || !Array.isArray(tmpProvider._scopeDistinctCache[tmpCacheKey]))
 			{
 				pRecord.DistinctLoading = [ {} ];
 				const tmpClauseAddress = pRecord.ClauseAddress;
 				const tmpClauseHash = pRecord.Hash;
-				tmpProvider.getRecordSetColumnDistinct(pRecord.FilterByColumn, { Filter: pRecord.DistinctFilter },
+				tmpProvider.getRecordSetColumnDistinct(pRecord.FilterByColumn, { Filter: this._resolveDistinctFilter(pRecord, tmpProvider) },
 					() => this._reRenderClause(tmpClauseAddress, tmpClauseHash));
 			}
 		}

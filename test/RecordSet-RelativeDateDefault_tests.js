@@ -31,7 +31,27 @@ function providerStub(pDefaultRelativeDays, pCurrent)
 		current: pCurrent || { Start: '', End: '' },
 		getFilterClauseSchemaForKey: () => ({ AvailableClauses: [ { ClauseKey: 'Date_Range', DefaultRelativeDays: pDefaultRelativeDays } ] }),
 		getQuickFilterDateRangeValue: function() { return this.current; },
-		upsertQuickFilterDateRange: function(pField, pClauseKey, pWhich, pValue) { this.upserts.push({ pField, pWhich, pValue }); },
+		// The REAL upsert, not a recorder. A stub here records whatever spelling the
+		// caller happens to use and agrees with it, which is exactly how a
+		// case-sensitivity bug shipped: the seeder passed 'Start', the real helper
+		// compared against 'start', and the value landed on the END bound -- turning
+		// "the last 365 days" into "everything before 365 days ago". The stub asserted
+		// the caller's own spelling and saw nothing wrong. Drive the real code and
+		// assert the resulting BOUNDS.
+		upsertQuickFilterDateRange: function(pField, pClauseKey, pWhich, pValue)
+		{
+			this.upserts.push({ pField, pWhich, pValue });
+			return libProviderBase.prototype.upsertQuickFilterDateRange.call(this, pField, pClauseKey, pWhich, pValue);
+		},
+		getFilterClauses: function() { return this.clauses; },
+		clauses: [],
+		_createQuickFilterClause: (pField, pClauseKey, pQuickFilterKey) => ({ QuickFilterKey: pQuickFilterKey, ClauseKey: pClauseKey, FilterByColumn: pField }),
+		/** The bounds actually written, read back off the live clause. */
+		boundsFor: function(pField)
+		{
+			const tmpClause = this.clauses.find((pClause) => pClause.QuickFilterKey === `Quick-${pField}`);
+			return (tmpClause && tmpClause.Values) || {};
+		},
 		_seedRelativeDateDefaults: libProviderBase.prototype._seedRelativeDateDefaults,
 	};
 }
@@ -47,15 +67,19 @@ suite('RecordSet relative date default', () =>
 		Expect(tmpProvider.upserts.length).to.equal(1);
 		const tmpExpected = new Date();
 		tmpExpected.setDate(tmpExpected.getDate() - 365);
-		Expect(tmpProvider.upserts[0].pWhich).to.equal('Start');
-		Expect(tmpProvider.upserts[0].pValue).to.equal(tmpExpected.toISOString().slice(0, 10));
+		// Assert the BOUND that was written, not the argument that was passed.
+		Expect(tmpProvider.boundsFor('DateSampled').Start).to.equal(tmpExpected.toISOString().slice(0, 10));
 	});
 
 	test('leaves the End bound alone — the window is open-ended forward', () =>
 	{
 		const tmpProvider = providerStub(365);
 		tmpProvider._seedRelativeDateDefaults(DEFINITIONS);
-		Expect(tmpProvider.upserts.every((pUpsert) => pUpsert.pWhich === 'Start')).to.equal(true);
+		// The regression that shipped: the window landed on End, so the dashboard
+		// filtered to everything BEFORE the cutoff instead of after it.
+		const tmpBounds = tmpProvider.boundsFor('DateSampled');
+		Expect(tmpBounds.End, 'End must stay open so the window runs forward to today').to.be.oneOf([ undefined, '' ]);
+		Expect(tmpBounds.Start, 'Start carries the cutoff').to.be.a('string').and.not.equal('');
 	});
 
 	test('does NOT override a value the user already chose', () =>
@@ -73,6 +97,23 @@ suite('RecordSet relative date default', () =>
 		tmpProvider.current = { Start: '', End: '' };   // user cleared it
 		tmpProvider._seedRelativeDateDefaults(DEFINITIONS);
 		Expect(tmpProvider.upserts.length, 'still one — seeding is once per field').to.equal(1);
+	});
+
+	test('the helper routes either spelling of the bound to the same place', () =>
+	{
+		for (const tmpSpelling of [ 'start', 'Start', 'START' ])
+		{
+			const tmpProvider = providerStub(365);
+			libProviderBase.prototype.upsertQuickFilterDateRange.call(tmpProvider, 'DateSampled', 'Date_Range', tmpSpelling, '2026-01-02');
+			Expect(tmpProvider.boundsFor('DateSampled').Start, `'${tmpSpelling}' must set Start`).to.equal('2026-01-02');
+			Expect(tmpProvider.boundsFor('DateSampled').End, `'${tmpSpelling}' must not set End`).to.be.oneOf([ undefined, '' ]);
+		}
+		for (const tmpSpelling of [ 'end', 'End' ])
+		{
+			const tmpProvider = providerStub(365);
+			libProviderBase.prototype.upsertQuickFilterDateRange.call(tmpProvider, 'DateSampled', 'Date_Range', tmpSpelling, '2026-01-02');
+			Expect(tmpProvider.boundsFor('DateSampled').End, `'${tmpSpelling}' must set End`).to.equal('2026-01-02');
+		}
 	});
 
 	test('a filter without DefaultRelativeDays is untouched', () =>

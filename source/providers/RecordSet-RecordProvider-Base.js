@@ -447,7 +447,7 @@ class RecordSetProviderBase extends libPictProvider
 			if (tmpCurrent.Start || tmpCurrent.End) { continue; }
 			const tmpStart = new Date();
 			tmpStart.setDate(tmpStart.getDate() - tmpDays);
-			this.upsertQuickFilterDateRange(tmpDefinition.Field, tmpDefinition.ClauseKey, 'Start', tmpStart.toISOString().slice(0, 10));
+			this.upsertQuickFilterDateRange(tmpDefinition.Field, tmpDefinition.ClauseKey, 'start', tmpStart.toISOString().slice(0, 10));
 		}
 	}
 
@@ -656,7 +656,12 @@ class RecordSetProviderBase extends libPictProvider
 			tmpClauses.push(tmpClause);
 		}
 		if (!tmpClause.Values || typeof tmpClause.Values !== 'object' || Array.isArray(tmpClause.Values)) { tmpClause.Values = {}; }
-		if (pWhich === 'start') { tmpClause.Values.Start = tmpValue; }
+		// Case-INSENSITIVE on purpose. This was `pWhich === 'start'`, so a caller
+		// passing 'Start' fell through to the else and wrote the END bound -- which
+		// inverts the filter: a "last 365 days" default became "everything before
+		// 365 days ago". Nothing about the parameter says it is case-sensitive, so
+		// the comparison is forgiving rather than the callers being careful.
+		if (String(pWhich).toLowerCase() === 'start') { tmpClause.Values.Start = tmpValue; }
 		else { tmpClause.Values.End = tmpValue; }
 		const fEmpty = (pVal) => (pVal === undefined || pVal === null || pVal === '');
 		if (fEmpty(tmpClause.Values.Start) && fEmpty(tmpClause.Values.End))

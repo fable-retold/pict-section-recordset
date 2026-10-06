@@ -750,6 +750,90 @@ class ViewRecordSetSUBSETFilters extends libPictView
 	}
 
 	/**
+	 * The distinct-value filter a clause should actually fetch with: its static `DistinctFilter`
+	 * narrowed by the CURRENT selection of every field named in `CascadeFrom`.
+	 *
+	 * This is what makes one quick filter depend on another — pick a Site and the Product list
+	 * collapses to the products that Site actually has. A parent with nothing picked narrows
+	 * nothing, so the child lists everything, which is the right zero state for a filter.
+	 *
+	 * `CascadeFrom` names FIELDS, and every filter definition's key equals its `FilterByColumn`,
+	 * so a field name is also the column to constrain. The returned string feeds both the fetch
+	 * and the provider's distinct cache key, so each distinct parent selection caches separately
+	 * and switching back to a previous Site is instant.
+	 *
+	 * @param {Record<string, any>} pProvider - The recordset provider (`RSP-Provider-<RecordSet>`).
+	 * @param {Record<string, any>} pDescriptor - The clause descriptor.
+	 * @return {string} The FoxHound filter stanza chain, or '' for no filter.
+	 */
+	resolveCascadedDistinctFilter(pProvider, pDescriptor)
+	{
+		let tmpFilter = pDescriptor.DistinctFilter || '';
+		const tmpParentFields = Array.isArray(pDescriptor.CascadeFrom) ? pDescriptor.CascadeFrom : [];
+		if ((tmpParentFields.length === 0) || !pProvider || (typeof pProvider.getQuickFilterEntityValue !== 'function'))
+		{
+			return tmpFilter;
+		}
+		for (const tmpParentField of tmpParentFields)
+		{
+			const tmpValues = pProvider.getQuickFilterEntityValue(tmpParentField);
+			if (!Array.isArray(tmpValues) || (tmpValues.length === 0)) { continue; }
+			// A value carrying a comma would split the IN list, so those are skipped rather
+			// than silently widening the child list to the wrong set.
+			const tmpUsable = tmpValues.filter((pValue) => String(pValue).indexOf(',') === -1);
+			if (tmpUsable.length === 0) { continue; }
+			tmpFilter += `${tmpFilter ? '~' : ''}FBL~${tmpParentField}~INN~${tmpUsable.join(',')}`;
+		}
+		return tmpFilter;
+	}
+
+	/**
+	 * The quick-filter fields that declare `CascadeFrom` containing `pParentField`.
+	 *
+	 * @param {Record<string, any>} pProvider @param {string} pParentField
+	 * @return {Array<Record<string, any>>} Quick-filter definitions that depend on the parent.
+	 */
+	resolveCascadeChildren(pProvider, pParentField)
+	{
+		if (!pProvider || (typeof pProvider.getQuickFilterDefinitions !== 'function')) { return []; }
+		return pProvider.getQuickFilterDefinitions(this.quickFiltersAutoDefault).filter((pDefinition) =>
+		{
+			if (pDefinition.Control !== 'distinct') { return false; }
+			const tmpDescriptor = pProvider.getFilterClauseSchemaForKey(pDefinition.Field)?.AvailableClauses?.find?.((pClause) => pClause.ClauseKey === pDefinition.ClauseKey);
+			return !!tmpDescriptor && Array.isArray(tmpDescriptor.CascadeFrom) && tmpDescriptor.CascadeFrom.indexOf(pParentField) !== -1;
+		});
+	}
+
+	/**
+	 * After a parent selection changes, DROP each dependent child's staged selection and re-mount
+	 * its picker against the newly narrowed option list.
+	 *
+	 * The selection is dropped rather than kept because a child value that the new parent does not
+	 * have would otherwise stay staged and commit an unsatisfiable filter — the user picks a
+	 * different Site and the grid comes back empty with no visible reason why.
+	 *
+	 * @param {string} pRecordSet @param {string} pViewContext @param {string} pParentField
+	 */
+	refreshCascadeChildren(pRecordSet, pViewContext, pParentField)
+	{
+		const tmpProvider = this.pict.providers['RSP-Provider-' + pRecordSet];
+		if (!tmpProvider) { return; }
+		for (const tmpChild of this.resolveCascadeChildren(tmpProvider, pParentField))
+		{
+			if (typeof tmpProvider.upsertQuickFilterEntity === 'function')
+			{
+				tmpProvider.upsertQuickFilterEntity(tmpChild.Field, tmpChild.ClauseKey, []);
+			}
+			this._mountQuickFilterDistinct(pRecordSet, pViewContext,
+				{
+					Field: tmpChild.Field, ClauseKey: tmpChild.ClauseKey, Label: tmpChild.Label,
+					RecordSet: pRecordSet, ViewContext: pViewContext,
+					HostID: `PRSP_QuickDistinct_${pRecordSet}_${tmpChild.Field}`,
+				});
+		}
+	}
+
+	/**
 	 * Mount (idempotently) a multi-select pict-section-picker into a quick-filter distinct host,
 	 * its options the clause's static `Options` or the column's distinct values (fetched + cached
 	 * on the recordset provider; re-mounted once the fetch resolves so the options fill in). The
@@ -774,11 +858,14 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		}
 		else
 		{
-			const tmpCacheKey = tmpDescriptor.DistinctFilter ? `${tmpDescriptor.FilterByColumn}::${tmpDescriptor.DistinctFilter}` : tmpDescriptor.FilterByColumn;
+			// CascadeFrom narrows this list by whatever its parent filters currently hold, so the
+			// filter is resolved per mount rather than read straight off the descriptor.
+			const tmpDistinctFilter = this.resolveCascadedDistinctFilter(tmpProvider, tmpDescriptor);
+			const tmpCacheKey = tmpDistinctFilter ? `${tmpDescriptor.FilterByColumn}::${tmpDistinctFilter}` : tmpDescriptor.FilterByColumn;
 			tmpValues = (tmpProvider._scopeDistinctCache || {})[tmpCacheKey];
 			if (!Array.isArray(tmpValues) && typeof tmpProvider.getRecordSetColumnDistinct === 'function')
 			{
-				tmpProvider.getRecordSetColumnDistinct(tmpDescriptor.FilterByColumn, { Filter: tmpDescriptor.DistinctFilter },
+				tmpProvider.getRecordSetColumnDistinct(tmpDescriptor.FilterByColumn, { Filter: tmpDistinctFilter },
 					() => this._mountQuickFilterDistinct(pRecordSet, pViewContext, pMount));
 				tmpValues = [];
 			}
@@ -897,6 +984,8 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		{
 			tmpProvider.upsertQuickFilterEntity(pField, pClauseKey, pValue);
 		}
+		// An entity filter can be a cascade parent too (pick a Project, narrow the Mix Designs).
+		this.refreshCascadeChildren(pRecordSet, pViewContext, pField);
 	}
 
 	/**
@@ -914,6 +1003,8 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		{
 			tmpProvider.upsertQuickFilterEntity(pField, pClauseKey, pValues);
 		}
+		// Anything declaring CascadeFrom on this field now has a different option list.
+		this.refreshCascadeChildren(pRecordSet, pViewContext, pField);
 	}
 
 	/**

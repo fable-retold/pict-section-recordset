@@ -50,6 +50,68 @@ const filterConfig = {
 };
 ```
 
+## Dependent (Cascading) Filters — `CascadeFrom`
+
+A `DistinctSelectedValueList` filter can narrow its own option list by what another
+filter currently has selected. Name the parent fields in `CascadeFrom`:
+
+```javascript
+Definitions: {
+    Site: {
+        Type: 'DistinctSelectedValueList', FilterByColumn: 'Site',
+        DisplayName: 'Site', ClauseKey: 'Site_AnyOf',
+        DistinctFilter: 'FBV~Deleted~EQ~0',
+    },
+    Product: {
+        Type: 'DistinctSelectedValueList', FilterByColumn: 'Product',
+        DisplayName: 'Product', ClauseKey: 'Product_AnyOf',
+        DistinctFilter: 'FBV~Deleted~EQ~0',
+        // Pick a Site and this list collapses to that Site's products.
+        CascadeFrom: [ 'Site' ],
+    },
+},
+QuickFilters: [ 'Site', 'Product' ],
+```
+
+Behaviour:
+
+- The distinct fetch uses `DistinctFilter` **plus** `FBL~<parentColumn>~INN~<selected…>`
+  for each parent that currently has a selection.
+- **A parent with nothing selected narrows nothing** — the child lists every value.
+  That is the correct zero state for a filter, so adding `CascadeFrom` cannot
+  make a dashboard show less than it did before anyone touched a control.
+- Several parents compose, in the order declared.
+- **Changing a parent clears the child's selection.** A child value the new parent
+  does not have would otherwise stay staged and commit a filter nothing can
+  satisfy — the grid comes back empty with no visible reason why.
+- The resolved filter is part of the provider's distinct cache key, so each parent
+  selection caches separately and switching back to a previous one is instant.
+- Both the quick-filter bar and the drawer control apply the same rule, so they
+  never disagree about a field's options.
+- `CascadeFrom` names **fields**, and every `Definitions` key must equal its
+  `FilterByColumn`, so a field name is also the column constrained.
+- A selected value containing a comma is skipped rather than split across the
+  `INN` list.
+
+An entity filter (`InternalJoinSelectedValueList`) can be a cascade parent too —
+pick a Project, narrow the Mix Designs.
+
+## Relative Date Defaults — `DefaultRelativeDays`
+
+A `DateRange` filter can seed itself to a trailing window on first load:
+
+```javascript
+DateSampled: {
+    Type: 'DateRange', FilterByColumn: 'DateSampled',
+    DisplayName: 'Date Sampled', MinimumLabel: 'From', MaximumLabel: 'To',
+    // Default view is the last year of samples.
+    DefaultRelativeDays: 365,
+},
+```
+
+The range is seeded once per field and **never over a value the user set**, so a
+shared or restored filter experience keeps its own dates.
+
 ## Filter Operators
 
 Available operators for filter conditions:
