@@ -589,11 +589,20 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		const tmpUrl = (tmpCurrent && (tmpCurrent.url || tmpCurrent.hashString)) || '';
 		if (tmpUrl.indexOf('FilteredTo/') < 0) { return ''; }
 		const tmpFilteredPart = (tmpUrl.split('FilteredTo/')[1] || '').split('/FilterExperience')[0];
-		const tmpMatch = tmpFilteredPart.match(/LK~([^~]+)/);
-		if (!tmpMatch) { return ''; }
-		let tmpValue = tmpMatch[1];
-		try { tmpValue = decodeURIComponent(tmpValue); } catch (pError) { /* leave raw */ }
-		return tmpValue.replace(/^%+|%+$/g, '');
+		// A free-text search builds one `LK~%token%` clause PER token PER search field. Pull EVERY token value
+		// (matching only the first truncated a multi-word search like "bridge over stream" to "bridge"), strip the
+		// % wildcards, and drop the consecutive per-field repeat of each token, to rebuild the full search term.
+		const tmpMatches = tmpFilteredPart.match(/LK~([^~/]+)/g);
+		if (!tmpMatches) { return ''; }
+		const tmpTokens = [];
+		for (const tmpRawMatch of tmpMatches)
+		{
+			let tmpValue = tmpRawMatch.replace(/^LK~/, '');
+			try { tmpValue = decodeURIComponent(tmpValue); } catch (pError) { /* leave raw */ }
+			tmpValue = tmpValue.replace(/^%+|%+$/g, '');
+			if (tmpValue.length > 0 && tmpValue !== tmpTokens[tmpTokens.length - 1]) { tmpTokens.push(tmpValue); }
+		}
+		return tmpTokens.join(' ');
 	}
 
 	/** The number of active (structured) filter clauses for a record set. */
