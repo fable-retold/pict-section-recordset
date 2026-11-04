@@ -458,6 +458,8 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		this._addFilterViewContext = null;
 		this._addFilterSearch = '';
 		this._addFilterExpandedKey = null;
+		this._addFilterTrackHandler = null;
+		this._addFilterTrackFrame = 0;
 		// FilterKeys to hide from the add-filter popover (e.g. internal/audit columns). Host apps
 		// set this; it is merged with a per-record-set config `FilterFieldBlacklist`.
 		this.filterFieldBlacklist = [];
@@ -1301,9 +1303,57 @@ class ViewRecordSetSUBSETFilters extends libPictView
 	_paintAddFilterOpenState()
 	{
 		const tmpPopover = document.getElementById('PRSP_AddFilter_Popover');
-		if (!tmpPopover) { return; }
+		if (!tmpPopover)
+		{
+			this._trackAddFilterAnchor(false);
+			return;
+		}
 		tmpPopover.classList.toggle('open', !!this._addFilterOpen);
 		if (this._addFilterOpen) { this._positionAddFilterPopover(tmpPopover); }
+		this._trackAddFilterAnchor(!!this._addFilterOpen);
+	}
+
+	/**
+	 * Keep the open (fixed) add-filter popover pinned to its trigger while anything scrolls or the
+	 * viewport resizes. Capture-phase scroll catches nested scroll containers as well as the document;
+	 * repositioning is batched to one per animation frame.
+	 *
+	 * @param {boolean} pTrack - true to start tracking (idempotent), false to stop.
+	 */
+	_trackAddFilterAnchor(pTrack)
+	{
+		if (typeof window === 'undefined') { return; }
+		if (pTrack && !this._addFilterTrackHandler)
+		{
+			this._addFilterTrackHandler = () =>
+			{
+				if (this._addFilterTrackFrame) { return; }
+				this._addFilterTrackFrame = window.requestAnimationFrame(() =>
+				{
+					this._addFilterTrackFrame = 0;
+					const tmpPopover = document.getElementById('PRSP_AddFilter_Popover');
+					if (!this._addFilterOpen || !tmpPopover)
+					{
+						this._trackAddFilterAnchor(false);
+						return;
+					}
+					this._positionAddFilterPopover(tmpPopover);
+				});
+			};
+			window.addEventListener('scroll', this._addFilterTrackHandler, { capture: true, passive: true });
+			window.addEventListener('resize', this._addFilterTrackHandler, { passive: true });
+		}
+		else if (!pTrack && this._addFilterTrackHandler)
+		{
+			window.removeEventListener('scroll', this._addFilterTrackHandler, { capture: true });
+			window.removeEventListener('resize', this._addFilterTrackHandler);
+			this._addFilterTrackHandler = null;
+			if (this._addFilterTrackFrame)
+			{
+				window.cancelAnimationFrame(this._addFilterTrackFrame);
+				this._addFilterTrackFrame = 0;
+			}
+		}
 	}
 
 	/**
@@ -1443,6 +1493,7 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		}
 		// Any full re-render rebuilds the add-filter slot, so the popover is closed — reset its state.
 		this._addFilterOpen = false;
+		this._trackAddFilterAnchor(false);
 		this.onMarshalToView();
 
 		// NOTE: This is where we ensure the filter experience is applied after a render.
