@@ -1,6 +1,7 @@
 /*
-	Unit tests for the add-filter popover's anchoring: the fixed popover follows its trigger while
-	the page (or a nested scroll container) scrolls, and stops listening once it closes.
+	Unit tests for the add-filter popover's anchoring: on open it moves to <body> and is placed in
+	document coordinates against its trigger, so it moves with the page; on close it goes back to its
+	slot, and a popover left on <body> by an earlier open is swept away.
 */
 
 const libBrowserEnv = require('browser-env');
@@ -17,38 +18,30 @@ suite
 	{
 		let _View;
 		let _TriggerTop;
-		let _Frames;
 
-		const fFlushFrames = () =>
-		{
-			const tmpFrames = _Frames;
-			_Frames = [];
-			tmpFrames.forEach((pFrame) => pFrame());
-		};
-
-		const fPopoverTop = () => document.getElementById('PRSP_AddFilter_Popover').style.top;
+		const fPopover = () => document.getElementById('PRSP_AddFilter_Popover');
 
 		setup(() =>
 		{
 			libBrowserEnv({ url: 'http://localhost/' });
-			_Frames = [];
-			window.requestAnimationFrame = (pCallback) => { _Frames.push(pCallback); return _Frames.length; };
-			window.cancelAnimationFrame = () => { _Frames = []; };
 			window.innerHeight = 800;
 			window.innerWidth = 1200;
+			window.scrollX = 0;
+			window.scrollY = 0;
 
 			document.body.innerHTML = '';
-			const tmpScroller = document.createElement('div');
-			tmpScroller.id = 'Scroller';
+			const tmpSlot = document.createElement('div');
+			tmpSlot.className = 'prsp-filters-add';
 			const tmpTrigger = document.createElement('button');
 			tmpTrigger.id = 'PRSP_Filter_Button_Add';
-			tmpScroller.append(tmpTrigger);
 			const tmpPopover = document.createElement('div');
 			tmpPopover.id = 'PRSP_AddFilter_Popover';
+			tmpPopover.className = 'prsp-addfilter-pop';
 			const tmpPanel = document.createElement('div');
 			tmpPanel.className = 'prsp-addfilter-panel';
 			tmpPopover.append(tmpPanel);
-			document.body.append(tmpScroller, tmpPopover);
+			tmpSlot.append(tmpTrigger, tmpPopover);
+			document.body.append(tmpSlot);
 			_TriggerTop = 300;
 			tmpTrigger.getBoundingClientRect = () =>
 				({ top: _TriggerTop, bottom: _TriggerTop + 30, left: 100, right: 200, width: 100, height: 30 });
@@ -57,55 +50,52 @@ suite
 			_View = Object.create(libFiltersView.prototype);
 			_View._addFilterOpen = false;
 			_View._addFilterExpandedKey = null;
-			_View._addFilterTrackHandler = null;
-			_View._addFilterTrackFrame = 0;
 		});
 
-		test('an open popover repositions under its trigger when the page scrolls', () =>
+		test('opening moves the popover to <body> and places it under its trigger', () =>
 		{
 			_View._addFilterOpen = true;
 			_View._paintAddFilterOpenState();
-			Expect(fPopoverTop()).to.equal('336px');
+			Expect(fPopover().parentElement).to.equal(document.body);
+			Expect(fPopover().classList.contains('open')).to.equal(true);
+			Expect(fPopover().style.top).to.equal('336px');
+			Expect(fPopover().style.left).to.equal('100px');
+		});
 
+		test('placement is in document coordinates, so the page scroll offset is added', () =>
+		{
+			window.scrollY = 500;
+			window.scrollX = 20;
 			_TriggerTop = 100;
-			window.dispatchEvent(new window.Event('scroll'));
-			fFlushFrames();
-			Expect(fPopoverTop()).to.equal('136px');
-		});
-
-		test('a scroll inside a nested container also repositions the popover', () =>
-		{
 			_View._addFilterOpen = true;
 			_View._paintAddFilterOpenState();
-
-			_TriggerTop = 200;
-			document.getElementById('Scroller').dispatchEvent(new window.Event('scroll'));
-			fFlushFrames();
-			Expect(fPopoverTop()).to.equal('236px');
+			Expect(fPopover().style.top).to.equal('636px');
+			Expect(fPopover().style.left).to.equal('120px');
 		});
 
-		test('several scroll events in one frame reposition once', () =>
-		{
-			_View._addFilterOpen = true;
-			_View._paintAddFilterOpenState();
-
-			window.dispatchEvent(new window.Event('scroll'));
-			window.dispatchEvent(new window.Event('scroll'));
-			window.dispatchEvent(new window.Event('resize'));
-			Expect(_Frames.length).to.equal(1);
-		});
-
-		test('closing the popover stops tracking scroll', () =>
+		test('closing returns the popover to its slot and clears what the portal wrote', () =>
 		{
 			_View._addFilterOpen = true;
 			_View._paintAddFilterOpenState();
 			_View.closeAddFilterPopover();
-			Expect(_View._addFilterTrackHandler).to.equal(null);
+			Expect(fPopover().parentElement.className).to.equal('prsp-filters-add');
+			Expect(fPopover().classList.contains('open')).to.equal(false);
+			Expect(fPopover().style.top).to.equal('');
+		});
 
-			_TriggerTop = 50;
-			window.dispatchEvent(new window.Event('scroll'));
-			Expect(_Frames.length).to.equal(0);
-			Expect(fPopoverTop()).to.equal('336px');
+		test('a popover left on <body> is swept when the slot has been re-rendered', () =>
+		{
+			_View._addFilterOpen = true;
+			_View._paintAddFilterOpenState();
+			const tmpStale = fPopover();
+			const tmpFresh = document.createElement('div');
+			tmpFresh.id = 'PRSP_AddFilter_Popover';
+			tmpFresh.className = 'prsp-addfilter-pop';
+			document.querySelector('.prsp-filters-add').append(tmpFresh);
+
+			_View._sweepPortaledAddFilterPopover(null);
+			Expect(tmpStale.isConnected).to.equal(false);
+			Expect(fPopover()).to.equal(tmpFresh);
 		});
 	}
 );

@@ -1,5 +1,18 @@
 const libPictView = require('pict-view');
 
+/**
+ * The theme custom properties the add-filter popover paints from. Copied onto it while it sits on
+ * <body>, so it keeps the host's theme after leaving a scoped container. Same approach as
+ * pict-section-picker's _THEME_TOKENS (PictView-Picker.js).
+ * @type {Array<string>}
+ */
+const _ADD_FILTER_THEME_TOKENS =
+[
+	'--theme-color-brand-primary', '--theme-color-text-primary', '--theme-color-text-secondary',
+	'--theme-color-text-muted', '--theme-color-border-default', '--theme-color-border-light',
+	'--theme-color-background-panel', '--theme-color-background-tertiary',
+];
+
 /** @type {Record<string, any>} */
 const _DEFAULT_CONFIGURATION_SUBSET_Filter =
 {
@@ -96,9 +109,9 @@ const _DEFAULT_CONFIGURATION_SUBSET_Filter =
 .prsp-filters-showdeleted-checkbox { width: 1.05rem; height: 1.05rem; cursor: pointer; accent-color: var(--theme-color-brand-primary, #156dd1); }
 
 /* Module-owned "Add filter" popover (replaces the old native <select> pickers). */
-/* Fixed (viewport-anchored) + JS-positioned on open, so no ancestor overflow:hidden — the filter card,
-   the slide-out drawer — can clip it, whatever the host's layout. */
-.prsp-addfilter-pop { position: fixed; z-index: 30; min-width: 280px; max-width: 360px; display: none; }
+/* Moved to <body> on open and placed in document coordinates, so no ancestor overflow:hidden — the filter
+   card, the slide-out drawer — can clip it, and it rides page scroll together with its trigger. */
+.prsp-addfilter-pop { position: absolute; z-index: 30; min-width: 280px; max-width: 360px; display: none; }
 .prsp-addfilter-pop.open { display: block; }
 /* Transparent full-viewport backdrop: catches outside clicks to close (no document listener). */
 .prsp-addfilter-backdrop { position: fixed; inset: 0; z-index: 0; }
@@ -458,8 +471,6 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		this._addFilterViewContext = null;
 		this._addFilterSearch = '';
 		this._addFilterExpandedKey = null;
-		this._addFilterTrackHandler = null;
-		this._addFilterTrackFrame = 0;
 		// FilterKeys to hide from the add-filter popover (e.g. internal/audit columns). Host apps
 		// set this; it is merged with a per-record-set config `FilterFieldBlacklist`.
 		this.filterFieldBlacklist = [];
@@ -1303,63 +1314,86 @@ class ViewRecordSetSUBSETFilters extends libPictView
 	_paintAddFilterOpenState()
 	{
 		const tmpPopover = document.getElementById('PRSP_AddFilter_Popover');
-		if (!tmpPopover)
+		if (!tmpPopover) { return; }
+		if (this._addFilterOpen)
 		{
-			this._trackAddFilterAnchor(false);
-			return;
+			this._portalAddFilterPopover(tmpPopover);
+			tmpPopover.classList.add('open');
+			this._positionAddFilterPopover(tmpPopover);
 		}
-		tmpPopover.classList.toggle('open', !!this._addFilterOpen);
-		if (this._addFilterOpen) { this._positionAddFilterPopover(tmpPopover); }
-		this._trackAddFilterAnchor(!!this._addFilterOpen);
+		else
+		{
+			tmpPopover.classList.remove('open');
+			this._restoreAddFilterPopover(tmpPopover);
+		}
 	}
 
 	/**
-	 * Keep the open (fixed) add-filter popover pinned to its trigger while anything scrolls or the
-	 * viewport resizes. Capture-phase scroll catches nested scroll containers as well as the document;
-	 * repositioning is batched to one per animation frame.
+	 * Move the add-filter popover to <body>, so no ancestor overflow:hidden can clip it, carrying the
+	 * resolved theme tokens with it. Same approach as pict-section-picker's _portalPop.
 	 *
-	 * @param {boolean} pTrack - true to start tracking (idempotent), false to stop.
+	 * @param {HTMLElement} pPopover - the #PRSP_AddFilter_Popover element.
 	 */
-	_trackAddFilterAnchor(pTrack)
+	_portalAddFilterPopover(pPopover)
 	{
-		if (typeof window === 'undefined') { return; }
-		if (pTrack && !this._addFilterTrackHandler)
+		this._sweepPortaledAddFilterPopover(pPopover);
+		if (pPopover.parentElement === document.body) { return; }
+		const tmpTrigger = document.getElementById('PRSP_Filter_Button_Add');
+		const tmpComputed = (tmpTrigger && typeof window.getComputedStyle === 'function') ? window.getComputedStyle(tmpTrigger) : null;
+		document.body.appendChild(pPopover);
+		if (tmpComputed)
 		{
-			this._addFilterTrackHandler = () =>
+			_ADD_FILTER_THEME_TOKENS.forEach((pToken) =>
 			{
-				if (this._addFilterTrackFrame) { return; }
-				this._addFilterTrackFrame = window.requestAnimationFrame(() =>
-				{
-					this._addFilterTrackFrame = 0;
-					const tmpPopover = document.getElementById('PRSP_AddFilter_Popover');
-					if (!this._addFilterOpen || !tmpPopover)
-					{
-						this._trackAddFilterAnchor(false);
-						return;
-					}
-					this._positionAddFilterPopover(tmpPopover);
-				});
-			};
-			window.addEventListener('scroll', this._addFilterTrackHandler, { capture: true, passive: true });
-			window.addEventListener('resize', this._addFilterTrackHandler, { passive: true });
-		}
-		else if (!pTrack && this._addFilterTrackHandler)
-		{
-			window.removeEventListener('scroll', this._addFilterTrackHandler, { capture: true });
-			window.removeEventListener('resize', this._addFilterTrackHandler);
-			this._addFilterTrackHandler = null;
-			if (this._addFilterTrackFrame)
-			{
-				window.cancelAnimationFrame(this._addFilterTrackFrame);
-				this._addFilterTrackFrame = 0;
-			}
+				const tmpValue = tmpComputed.getPropertyValue(pToken);
+				if (tmpValue && tmpValue.trim() !== '') { pPopover.style.setProperty(pToken, tmpValue.trim()); }
+			});
 		}
 	}
 
 	/**
-	 * Position the (fixed) add-filter popover against its trigger button, flipping above when there's
-	 * more room there. Fixed positioning means no ancestor overflow:hidden (the host's filter card, the
-	 * slide-out drawer) can clip it — the price is we set its top/left from the trigger's rect here.
+	 * Return a closed popover to its slot beside the trigger and drop everything the portal wrote. If a
+	 * re-render already put a fresh popover in the slot, the portaled one is stale and is removed.
+	 *
+	 * @param {HTMLElement} pPopover - the #PRSP_AddFilter_Popover element.
+	 */
+	_restoreAddFilterPopover(pPopover)
+	{
+		if (pPopover.parentElement === document.body)
+		{
+			const tmpSlot = document.querySelector('.prsp-filters-add');
+			if (!tmpSlot || tmpSlot.querySelector('.prsp-addfilter-pop'))
+			{
+				pPopover.remove();
+				return;
+			}
+			tmpSlot.appendChild(pPopover);
+		}
+		pPopover.style.top = '';
+		pPopover.style.left = '';
+		_ADD_FILTER_THEME_TOKENS.forEach((pToken) => pPopover.style.removeProperty(pToken));
+		const tmpPanel = /** @type {HTMLElement} */ (pPopover.querySelector('.prsp-addfilter-panel'));
+		if (tmpPanel) { tmpPanel.style.maxHeight = ''; }
+	}
+
+	/**
+	 * Remove any add-filter popover left on <body> by an earlier open, except the one to keep.
+	 *
+	 * @param {HTMLElement|null} pKeep - the popover to keep, or null to remove them all.
+	 */
+	_sweepPortaledAddFilterPopover(pKeep)
+	{
+		if (typeof document === 'undefined') { return; }
+		document.querySelectorAll('body > [id="PRSP_AddFilter_Popover"]').forEach((pNode) =>
+		{
+			if (pNode !== pKeep) { pNode.remove(); }
+		});
+	}
+
+	/**
+	 * Place the portaled add-filter popover against its trigger in document coordinates (viewport rect
+	 * plus scroll), flipping above when there's more room there. Being absolute on <body>, it then moves
+	 * with the page like its trigger, so one placement per open is enough.
 	 *
 	 * @param {HTMLElement} pPopover - the #PRSP_AddFilter_Popover element (already display:block).
 	 */
@@ -1373,23 +1407,23 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		const tmpMargin = 8;
 		const tmpVH = window.innerHeight;
 		const tmpVW = window.innerWidth;
+		const tmpScrollX = window.scrollX || 0;
+		const tmpScrollY = window.scrollY || 0;
 		const tmpWidth = pPopover.offsetWidth || 300;
-		pPopover.style.left = `${Math.round(Math.max(tmpMargin, Math.min(tmpRect.left, tmpVW - tmpWidth - tmpMargin)))}px`;
-		pPopover.style.right = 'auto';
+		pPopover.style.left = `${Math.round(Math.max(tmpMargin, Math.min(tmpRect.left, tmpVW - tmpWidth - tmpMargin)) + tmpScrollX)}px`;
 		const tmpSpaceBelow = tmpVH - tmpRect.bottom - tmpGap - tmpMargin;
 		const tmpSpaceAbove = tmpRect.top - tmpGap - tmpMargin;
 		// Prefer the natural downward direction; only flip above when the room below is genuinely cramped.
 		if (tmpSpaceBelow >= 220 || tmpSpaceBelow >= tmpSpaceAbove)
 		{
-			pPopover.style.top = `${Math.round(tmpRect.bottom + tmpGap)}px`;
-			pPopover.style.bottom = 'auto';
 			if (tmpPanel) { tmpPanel.style.maxHeight = `${Math.max(160, Math.min(tmpSpaceBelow, 460))}px`; }
+			pPopover.style.top = `${Math.round(tmpRect.bottom + tmpGap + tmpScrollY)}px`;
 		}
 		else
 		{
-			pPopover.style.top = 'auto';
-			pPopover.style.bottom = `${Math.round(tmpVH - tmpRect.top + tmpGap)}px`;
+			// Measured after the max-height is set; no transform, which would re-anchor the fixed backdrop.
 			if (tmpPanel) { tmpPanel.style.maxHeight = `${Math.max(160, Math.min(tmpSpaceAbove, 460))}px`; }
+			pPopover.style.top = `${Math.round(tmpRect.top - tmpGap - pPopover.offsetHeight + tmpScrollY)}px`;
 		}
 	}
 
@@ -1493,7 +1527,7 @@ class ViewRecordSetSUBSETFilters extends libPictView
 		}
 		// Any full re-render rebuilds the add-filter slot, so the popover is closed — reset its state.
 		this._addFilterOpen = false;
-		this._trackAddFilterAnchor(false);
+		this._sweepPortaledAddFilterPopover(null);
 		this.onMarshalToView();
 
 		// NOTE: This is where we ensure the filter experience is applied after a render.
