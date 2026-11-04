@@ -150,7 +150,7 @@ const _DEFAULT_CONFIGURATION_SUBSET_Filter =
 			Template: /*html*/`
 	<!-- DefaultPackage pict view template: [PRSP-SUBSET-Filters-Template] -->
 	<div class="prsp-filters" id="PRSP_FilterBar">
-		<form id="PRSP_Filter_Form" class="prsp-filters-bar" onsubmit="_Pict.views['PRSP-Filters'].handleSearch(event, '{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}'); return false;">
+		<form id="PRSP_Filter_Form" class="prsp-filters-bar" onsubmit="event.preventDefault(); event.stopPropagation(); _Pict.views['PRSP-Filters'].handleSearch(event, '{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}'); return false;">
 			{~T:PRSP-SUBSET-Filters-Template-Input-Fieldset~}
 			{~T:PRSP-SUBSET-Filters-Template-Button-Fieldset~}
 		</form>
@@ -162,7 +162,7 @@ const _DEFAULT_CONFIGURATION_SUBSET_Filter =
 					<!-- Quick Filters: a curated, one-interaction bar painted post-render into this host
 					     (empty when the record set has no quick filters → CSS :empty hides it). -->
 					<div class="prsp-quickfilters" id="PRSP_QuickFilters"></div>
-					<div id="PRSP_Filter_Instances" class="prsp-filters-clauses" onkeydown="if (event.key === 'Enter' &amp;&amp; !event.target.closest('.pps')) { event.preventDefault(); _Pict.views['PRSP-Filters'].handleSearch(event, '{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}'); }">
+					<div id="PRSP_Filter_Instances" class="prsp-filters-clauses">
 						{~FIV:Record~}
 					</div>
 					{~T:PRSP-SUBSET-Filters-Template-AddFilter-Fieldset~}
@@ -311,12 +311,11 @@ const _DEFAULT_CONFIGURATION_SUBSET_Filter =
 `
 		},
 		{
-			// Text control (fuzzy match) — commits on blur / Enter (never per-keystroke, so the
-			// re-render that an apply triggers can't steal focus mid-type).
+			// Text control (fuzzy match) — commits on change, which the browser fires on Enter and on blur
+			// (never per-keystroke, so the re-render that an apply triggers can't steal focus mid-type).
 			Hash: 'PRSP-QuickFilter-Text',
 			Template: /*html*/`
 		<input class="prsp-quickfilter-input" type="text" value="{~D:Record.Value~}" placeholder="{~D:Record.Placeholder~}" autocomplete="off"
-			onkeydown="if (event.key === 'Enter') { event.preventDefault(); this.blur(); }"
 			onchange="_Pict.views['PRSP-Filters'].applyQuickFilterText('{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}', '{~D:Record.Field~}', '{~D:Record.ClauseKey~}', this.value)">
 `
 		},

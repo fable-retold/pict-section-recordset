@@ -155,6 +155,12 @@ class ViewRecordSetSUBSETFilterEntityReferenceBase extends ViewRecordSetSUBSETFi
 		return this.options.EntityInputType ? 'PRSP-Filter-EntityRef-Input' : 'PRSP-Filter-EntityRef-Table';
 	}
 
+	/** @return {string} The clause body template: the table UI carries its own search form, so it can't sit in another. */
+	getClauseBodyTemplate()
+	{
+		return this.options.EntityInputType ? super.getClauseBodyTemplate() : 'PRSP-Filter-Base-Body';
+	}
+
 	/** @param {Record<string, any>} pRecord */
 	prepareRecord(pRecord)
 	{

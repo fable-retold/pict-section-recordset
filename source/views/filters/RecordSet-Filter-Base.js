@@ -88,15 +88,36 @@ const _DEFAULT_CONFIGURATION_SUBSET_Filter =
 			Template: /*html*/`
 	<!-- DefaultPackage pict view template: [PRSP-Filter-Base-Template] -->
 	<div class="prsp-filter" id="PRSP_Filter_Container_{~D:Record.Hash~}" data-i-filter-hash="{~D:Record.Hash~}">
-		<div class="prsp-filter-body">
-			{~TBR:Context[0].getFilterFormTemplate()~}
-		</div>
+		{~TBR:Context[0].getClauseBodyTemplate()~}
 		<button type="button" class="prsp-filter-remove" title="Remove this filter" aria-label="Remove this filter"
 			onclick="_Pict.views['PRSP-FilterType-{~D:Record.Type~}'].removeClause(event, '{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}', '{~D:Record.Hash~}');">
 			{~I:Trash~}
 		</button>
 	</div>
 	<!-- DefaultPackage end view template:	[PRSP-Filter-Base-Template] -->
+`
+		},
+		{
+			// Clause body as its own form, so Enter in any of its inputs commits the value (the browser
+			// fires change before submit) and then applies the search. Ids are namespaced by clause hash,
+			// and the hidden submit is bound to this form by id, so it can never submit a form the clause
+			// does not own — e.g. a host form the filters were rendered inside.
+			Hash: 'PRSP-Filter-Base-Body-Form',
+			Template: /*html*/`
+		<form class="prsp-filter-body" id="PRSP_Filter_Clause_Form_{~D:Record.Hash~}"
+			onsubmit="event.preventDefault(); event.stopPropagation(); _Pict.views['PRSP-Filters'].handleSearch(event, '{~D:Record.RecordSet~}', '{~D:Record.ViewContext~}'); return false;">
+			{~TBR:Context[0].getFilterFormTemplate()~}
+			<button type="submit" id="PRSP_Filter_Clause_Submit_{~D:Record.Hash~}" form="PRSP_Filter_Clause_Form_{~D:Record.Hash~}" hidden tabindex="-1" aria-hidden="true"></button>
+		</form>
+`
+		},
+		{
+			// Clause body for types that render a form of their own inside it (forms cannot nest).
+			Hash: 'PRSP-Filter-Base-Body',
+			Template: /*html*/`
+		<div class="prsp-filter-body">
+			{~TBR:Context[0].getFilterFormTemplate()~}
+		</div>
 `
 		},
 	],
@@ -144,6 +165,17 @@ class ViewRecordSetSUBSETFilterBase extends libPictView
 	getFilterFormTemplate()
 	{
 		return 'PRSP-Filter-Base-Form';
+	}
+
+	/**
+	 * The template hash for the clause body that wraps getFilterFormTemplate(). A type whose own
+	 * template contains a <form> overrides this to return 'PRSP-Filter-Base-Body'.
+	 *
+	 * @return {string}
+	 */
+	getClauseBodyTemplate()
+	{
+		return 'PRSP-Filter-Base-Body-Form';
 	}
 
 	/**
